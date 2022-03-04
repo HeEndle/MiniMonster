@@ -1,0 +1,1526 @@
+'MiniMonster - Script for detection and analysis of miniature postsynaptic currents
+'Script written by Heiko Endle at Universitätsmedizin Mainz
+Proc Versions()
+'MiniMonster Script Versions
+'1.0:   Initial release.
+'1.1b:   - cancel button in settings dialog now terminates the script
+'        - Improved peak finding algorithm
+'1.11b:  - Made Threshold Baseline sensitive to correct for changes in Baseline
+'1.12b:  - Improved threshold dialog to be in multiples of the noise SD
+'1.13b:  - Added a horizontal cursor for the threshold in manual mode - added "Proc SetThresholdCursor ()"
+'1.14b:  - Added detection for double peaks
+'1.15b:  - Separated peak finding functions for positive and negative peak directions
+'1.151b: - Bugfix in Detection of event start (left side cursor).
+'1.2b:   - Replaced peakfinding with libPeakDetect
+'        - Recoded amplitude, half-maximum-width, initial slope and decay time calculation
+'        - Expanded settings dialog for new features
+'        - Reworked Autoreject
+'        - Parameters added to protocol: smoothingrange, avgrange, searchrange and autoreject parameters
+'1.3b:   - Implemented libConfigIO, to load settings from config file
+'1.31b   - GetSlopeRise doesnt fail anymore when the slope can not be properly detected instead the slope for the peak will be set to 0
+'1.35b   - Write list of mean frequencies into protocol for a user defined time range
+'1.351b  - Fixed calculation of means, detection errors for peak data (amplitude, slope, etc.) are ignored for calculating the average
+'1.352b  - Save user defined region of noise for threshold calculation
+'1.4b    - Integrated manual/automatic mode switch in the settings dialog.
+'        - Added support for different peak detection modules.
+'        - Added parameters for slope based peak detection to the settings dialog.
+'        - Parameters added to protocol: Autodetection module used, slope threshold and time past threshold for slope based detection module
+'        - Changed Peak review Dialog to display properties of current peak
+'1.41b   - Changed peaks list index in protocol to be 1-based instead of 0-based, to reflect markers
+'1.42b   - Separated dialogue callback function of Peakreview and Manual Mode
+'1.5b    - Integrated detection for 50 Hz noise
+'        - Added ability to load previously analyzed files
+'1.51b   - Added keybindings to the peak review dialog
+'1.52b   - Fixed bug (index out of bounds) in 50 Hz detection
+'        - Noise detection setting get printed in protocol
+'        - Added dialog for noise detection settings
+'1.6b    - Added Low/Highpassfilters and moved smoothing to seperate dialogue.
+'        - Added amplitudes to the list of means
+'1.61b   - Fixed a Bug preventing the sampling rate being correct on channels that were not part of the normal samling configuration
+'        - Changed Settings%() to be a function that calls the settings dialog and acts upon different return values
+'1.611b  - Fixed divide by zero in average amplitude of intervals list
+'1.62b   - Changed settings dialog to make future adjustments easier. Put spike rejection and spike parameters in their own dialog.
+'1.7b    - Changed Settings dialog and  added saving and loading of config files.
+'1.71b   - Fixed a bug that would cause negative frequencies when the processed channels were discarded.
+'        - Correctly disble maunual mode settings on initial settings dialog load.
+'        - Fixed inclued working correctly if Spikes is started from a folder different to the one containing the main script.
+end;
+'---------------------------Global Variable Declarations-----------------------------
+'------General Script Information------
+var Version$:="1.71b"; 'Script Version
+var quit%;  'flag if essential dialog has been cancelled by the user, causes script to halt at exit points
+var rerun%:=0; 'flag 1 if old peak data is loaded
+var configload%;    'flag if config was loaded
+var ConfigArr[0];   'stores settings
+'--------------------------------------
+'------Peak Detection General Settings---------
+var Mode%;      'is 0 when user chooses full manual mode, 1 is auto, 2 is for imported peaks
+var peakdirection%:=1;    'is 1 when negative and 0 when positive
+var sloperange; 'timerange for slope calculation (in s)
+var threshold;  'stores threshold value
+var thresholdSD;    'stores the threshold in multiples of noiseSD
+var maxthreshold; 'stores maximum value, used to filter peaks that are too large
+var mean;       'stores mean value of channel
+var noise;      'stores noise level
+var noiseSD;    'stores noise standard deviation
+var NoiseMarkerStart;   'stores start time for noise detection window specified by user
+var NoiseMarkerStop;    'stores stop time for noise detection window specified by user
+var ThresholdList$:="1.0|2.0|3.0|4.0"; 'stores recommendations for thresold (multiples of noiseSD)
+var avginterval:=0.5;      'stores time inteval for averaging. 
+var searchrange:=0.5;    'stores the range to search for peak on/offset
+var MinPeakDistance:=0.003;    'stores the minimum distance allowed between peaks
+var IntervalMultiplier:=2;     'stores the interval multiplier used for detecting the end of the decay
+var MinTimeCrossThreshold:=0.002; 'stores the time for which the threshold must be crossed to be detected as peak
+var MaxTimeCrossThreshold:=0.020; 'stores the time for which the trace can maximum stay cross threshold to still be considered a peak
+var MeanBouts:=0.5; 'stores interval of which the mean is calculated for thresholding
+'--------------------------------------------
+'-----Filter and Smoothing Settings ---
+var keepprocessed%:=1;
+var filterHighpassStatus$;  'status of highpass filter 'ON' or 'OFF'
+var filterHighpassFreq;
+var filterHighpassTransition;
+var filterHighpassAttenuation;
+var filterLowpassStatus$;   'status of lowpass filter 'ON' or 'OFF'
+var filterLowpassFreq;
+var filterLowpassTransition;
+var filterLowpassAttenuation;
+var SamplingRate;   'stores sampling rate of the analyzed channel
+var smoothingStatus$;   'status of smoothing 'ON' of 'OFF'
+var smoothingrange:=0.005; 'stores time used for smoothing
+'--------------------------------------
+'------Auto Peak Detection Settings ---
+var PeakDetectionModule%;       'stores chosen Module
+var PeakDetectionModuleList$[2];   'stores a List of available modules
+PeakDetectionModuleList$[0]:="progressive maximum";
+PeakDetectionModuleList$[1]:="slope based";
+var SlopeDetect[2];     'stores values for slope based peak detection module: [0] slope threshold, [1] time cross threshold
+'--------------------------------------
+'----Manual Peak Detection Settings ---
+var ManualCursorSnap:=0.005;   'sotres time which is searched for peak left and right of cursor set in manual mode
+var thresholdCursorSD; 'stores location of the horizontal threshold cursor in multiples of noiseSD
+var thresholdCursor;    'stores location of the horizontal threshold cursor
+'--------------------------------------
+'--------Peak Autoreject Settings------
+var HWMinMax[2];  'stores minimum and maximum half width for peak approval
+HWMinMax[0]:=0;     'minimum
+HWMinMax[1]:=0;     'maximum
+var AmpMinMax[2];   'stores minimum and maximum amplitude for peak approval
+AmpMinMax[0]:=0;    'minimum
+AmpMinMax[1]:=0;    'maximum
+var SlopeMinMax[2];   'stores minimum and maximum initial slope for peak approval
+SlopeMinMax[0]:=0;    'minimum
+SlopeMinMax[1]:=0;    'maximum
+'----50 Hz noise detection settings----
+var acNoiseDetect%:=1; '50 Hz noise detection switch 1 = on, 0 = off
+var acNoiseDetect$;    'Laberl for 50Hz noise detection status either "ON" or "OFF"
+var acPeakCount%:=3;   'Number of peaks at 50 Hz in a row until peaks get flagged as noise  
+var acNoiseTolerance:=0.002; 'Tolerance for determining if peak frequency is 50 Hz
+'--------------------------------------
+'--------------------------------------
+'----------Peak Data Settings----------
+var SlopeRiseFrom:=10;  'stores the start value for slope/rise measurement in % of max amplitude
+var SlopeRiseTo:=90;    'stores the end value for slope/rise measurement in % of max amplitude
+var decaylimit:=37;     'stores the end value for decay time measurement in % of max amplitude
+var Mt:=60;      'stores the time range for calculating mean frequency
+'--------------------------------------
+'--------View and channel handles------
+var file%:=View();  'stores viewhandle of file
+var ch%:=3;     'stores channel of interest
+var smooth%;    'stores smoothed channel handle
+var slope%;     'stores channel handle of 1st derivative
+var marker%;    'stores the marker channel handle
+var noisemark%; 'stores handle of the noise marker channel
+var config%;    'stores handle of config file
+var CurrentPeak%:=0;   'currently viewed peak
+var TextItem1%; 'stores itemnumber for dialog text
+'--------------------------------------
+'----peak data arrays------------------
+var peaks[0];   'stores times of automatically detected peaks
+var peaksLeft[0];   'stores start times of the peaks
+var peaksRight[0];  'stores decay end of the peaks
+var amplitudes[0];  'stores peak amplitudes
+var peakhalfwidth[0];   'stores 50-50 width of peaks
+var slopes[0];      'stores slopes/rise
+var decay[0];       'stores decay times
+var approved%[0];   'stores approval status of events. 1-approved, 0-rejected by user, -1-rejected by system, -2-50Hz noise detected
+var autoreject%[0]; 'stores value for autorejection 
+'-------------------------------------
+'-------Debugging---------------------
+var dummy%;         'dummy variable
+var debug%;
+'-------------------------------------
+FrontView(file%);
+'------------------------------------------------------------------------------------
+'------------Includes----------------------------------------
+#include "libPeakDetect.s2s"
+#include "libConfigIO.s2s"
+'------------------------------------------------------------
+'-------create protocol and set up workspace-----------------
+var protocol%:=FileNew(1,1);    'stores viewhandle of protocol file
+WindowTitle$("Protocol");       'set window title
+Window(0,0,15,100);             'display protocol on the left side of screen
+Print(Date$(2,2,3,2)+" "+Time$(1,3)+"\n"+"MiniMonster protocol"+"\n"+"Script Version "+Version$+"\n");
+Print("Peak detection module Version "+libPeakDetectVersion$+"\n");
+Print("Config IO Tools Version "+libConfigIOVersion$+"\n");
+View(file%);                    'set view back to data file
+Window(15,0,100,100);           'display data file on the right side of the screen
+'------------------------------------------------------------
+CursorDelete(-1);               'delete all vertical cursors
+HCursorDelete(-1);              'delete all horizontal cursors
+
+Message("This is a development Version of MiniMonster. Use at own risk.");  'Beta Message
+
+if IsAnalyzed()= 1 then
+    rerun%:=ReanalysisDialog();
+    if quit% = 1 then halt endif;   
+endif;
+docase
+case rerun% = 1 then
+    Mode%:=2;
+    ReadAnalyzedFile();
+    if GetProcessedChannels%() = -1 then
+        ChannelProcessSettings%();
+        if quit% = 1 then halt endif;
+        ProcessAdapter();
+    endif;
+    WritePeakOnOffset();
+    mean:=ChanMeasure(ch%,2,0,MaxTime());
+    noise:=GetNoise(ch%);
+    CursorNew(0,1);
+    CursorNew(0,2);
+    CursorLabel(4,1,"left");
+    CursorLabel(4,2,"right");
+    SpikeRejectionSetting%();
+    WriteHeader(protocol%);
+case rerun% = 0 then    
+    Init();
+    configload%:=ReadConfig%(ConfigArr);
+    if configload% > 0 then ReadConfigArr(ConfigArr) endif;
+    Settings%();
+    PostSettings ();
+    if quit% = 1 then halt endif;
+    WriteConfigArr(ConfigArr);
+    WriteConfig%(ConfigArr);
+    WriteHeader(protocol%);
+    ProcessAdapter();
+    docase
+    case Mode% = 0 then
+        MoveWindowTo(0);
+        SetThresholdCursor();
+        ManualModeDlg%();
+    case Mode% = 1 then
+        if peakdirection% = 1 then
+            docase
+            case PeakDetectionModule% = 0 then
+                findPeaksNegativePA(ch%,smooth%,slope%,file%,peaks,peaksLeft,peaksRight,thresholdSD,NoiseMarkerStart,NoiseMarkerStop,avginterval,searchrange,MinPeakDistance);
+            case PeakDetectionModule% = 1 then
+                findPeaksNegativeSlope(file%,ch%,slope%,peaks,peaksLeft,peaksRight,searchrange,SlopeDetect[0],SlopeDetect[1]);
+            endcase
+        else
+            'findPeaksPositive(ch%,file%,protocol%,peaks);
+        endif 
+        AddMarker(marker%,peaks);   
+    endcase;
+endcase;
+InitDataArrays(peaks,approved%,autoreject%,peaksLeft,peaksRight,amplitudes,peakhalfwidth,slopes,decay);
+GetPeakData(peaks,peaksLeft,peaksRight);    'Calculate peak properties
+Autoreject();
+MovetoEvent(0);
+GoToPeakDlg();  'Start Peak Review Dialog
+Cleanup();
+WritePeaksList(protocol%);
+WriteMeansList(protocol%);
+WriteMeans(protocol%);    
+    
+Halt;
+
+Proc ProcessAdapter ()  'call ProcessRawData function
+var fHS$:=filterHighpassStatus$;
+var fHF:=filterHighpassFreq;
+var fHT:=filterHighpassTransition;
+var fHA:=filterHighpassAttenuation;
+var fLS$:=filterLowpassStatus$;
+var fLF:=filterLowpassFreq;
+var fLT:=filterLowpassTransition;
+var fLA:=filterLowpassAttenuation;
+
+ProcessRawData(ch%,fHS$,fHF,fHT,fHA,fLS$,fLF,fLT,fLA,sloperange,smoothingStatus$,smoothingrange,smooth%,slope%);
+end;
+Func ChannelProcessSettings%()
+DlgCreate("Channel processing settings");
+DlgChan(1,"Channel to analyze",1);
+DlgButton(0,"Cancel",SettingsCancel%);
+DlgShow(ch%);
+SamplingRate:=1/BinSize(ch%);    'get sample rate from channel
+FilterSettings%();
+return 1;
+end;
+Func GetProcessedChannels%() 'finds processed channels in files previously analyzed
+'variables
+var channelslist%[1];    'stores list of channels
+var channels%;  'stores number of channels
+var n%; 'counter
+var success%;
+'-----
+channels%:=ChanList(channelslist%,1);   'get number of Waveform or result channels
+resize channelslist%[channels%+1];
+ChanList(channelslist%,1);  'Get List of Waveform or result channels
+for n%:=1 to len(channelslist%)-1 do
+    docase        
+    case ChanTitle$(channelslist%[n%])="smoothed" then
+        smooth%:=channelslist%[n%];
+        success%+=1;
+    case ChanTitle$(channelslist%[n%])="1st derivative" then
+        slope%:=channelslist%[n%];
+        success%+=1;
+    endcase    
+next
+if success% = 2 then
+    return 1;
+else
+    return -1;
+endif;
+end;
+Func DeleteProcessedChannels%() 'delete smoothed and 1st derivativ channels
+var error%;
+error%:=ChanDelete(smooth%);
+if error% = 1 then return -1 endif;
+error%:=ChanDelete(slope%);
+if error% = 1 then return -1 endif;
+return 1;
+end;
+Proc WritePeakOnOffset()    'writes peak on and offsets for all current peaks
+'variables
+var n%; 'counter
+var onset;
+var offset;
+'-----
+resize peaksLeft[len(peaks)];
+resize peaksRight[len(peaks)];
+for n%:=0 to len(peaks)-1 do
+    FindPeakOnOffset(slope%,peaks[n%],onset,offset,searchrange);
+    peaksLeft[n%]:=onset;
+    peaksRight[n%]:=offset;
+next
+
+end;
+Func ReanalysisDialog() 'displays dialog to chose if new peakfinding should be done or old peak data should be loaded
+'variables
+var option%;    'option chosen by the user
+'-----
+DlgCreate("Previous peak data detected",0,0,60);
+DlgText("What do you want to do?",0,1);
+DlgList(1,30,"Run new peak detection|Load previosly detected peaks");
+DlgButton(0,"Cancel",SettingsCancel%);
+DlgShow(option%);
+return option%;
+end;
+Func IsAnalyzed()   'returnes 1 if file has been analyzed previously and 0 if not
+'variables
+var channels%[1];   'Stores number of TextMark Channels
+'------
+if ChanList(channels%,32) = 0 then  'If there is a TextMark Channel
+    return 0;
+else
+    return 1;
+endif;
+end;
+Func ReadAnalyzedFile() 'reads an analyzed file and imports the peaks
+var markerchannel%; 'channel specifier of the chosen TextMarkChannel
+var events%;    'Stores number of events
+var n%;  'Counter
+var time;   'time of current event
+'--------
+DlgCreate("Channel selection");
+DlgChan(1,"Chose markerchannel",32);
+DlgShow(markerchannel%);
+events%:=Count(markerchannel%,0,MaxTime(markerchannel%));
+resize peaks[events%];
+for n%:=0 to events%-1 do
+    peaks[n%]:=NextTime(markerchannel%,time);
+    time:=peaks[n%];
+next;
+end;
+Proc Init ()    'run at the beginning
+DlgCreate("Select Channel");
+DlgChan(1,"Channel to analyze",1);
+DlgShow(ch%);
+mean:=ChanMeasure(ch%,2,0,MaxTime());
+marker%:=NewMarkerChannel%("Events");
+CursorNew(0,1);
+CursorNew(0,2);
+CursorLabel(4,1,"left");
+CursorLabel(4,2,"right");
+'DlgCreate("Select Mode");
+'DlgList(1,"Detection mode:","Automatic|Manual");
+'DlgShow(Mode%);
+noise:=GetNoise(ch%);
+SamplingRate:=1/BinSize(ch%);    'get sample rate from channel
+end;
+Proc PostSettings() 'run after settings
+threshold:= noiseSD*thresholdSD;
+end;
+Proc Cleanup()  'run at the end.
+
+RemoveRejectedMarkers();
+if keepprocessed% = 0 then
+    DeleteProcessedChannels%();
+endif;
+
+end;
+Func NewMarkerChannel% (title$)
+var chan%;
+chan%:=MemChan(8,10);
+ChanTitle$(chan%,title$);
+ChanShow(chan%);
+'debug%:=MemChan(8,10);
+'ChanTitle$(debug%,"crossings");
+'ChanShow(debug%);
+return chan%;
+end;
+Func ManualModeDlg%()   'Dialog for manually detection of peaks
+CursorNew(XLow()+(XHigh()-XLow())/2,5);
+CursorLabel(4,5,"Place at event");
+DlgCreate("Select events");
+DlgButton(0,"Close",ManualDlgClose%);
+DlgButton(1,"Detect Event",ManualDetect%,6,1);
+DlgButton(3,"Next",MoveWindow%,15,2);
+DlgButton(4,"Previous",MoveWindow%,1,2);
+DlgButton(5,"Delete Event",ManualDelete%,6,3);
+DlgAllow(319,0,ManualDlgChanged%);
+DlgShow();
+return 1;
+end;
+Func ManualDlgClose% () 'Function called when manual detection dialog is closed
+CursorDelete(5);
+return 0;
+end;
+Func ManualDetect% ()
+AddSingleEvent(ChanSearch(ch%,2,Cursor(5)-ManualCursorSnap,Cursor(5)+ManualCursorSnap));
+return 1;   'keep dialog active
+end;
+Func ManualDelete% ()
+var n%;
+var stop:=len(peaks)-1;
+var time;
+while n% <= stop do
+    if peaks[n%] >= Cursor(5)-ManualCursorSnap and peaks[n%] <= Cursor(5)+ManualCursorSnap then
+        time:=peaks[n%];
+        DeleteSingleEvent(time);
+        stop:=len(peaks)-1;
+    endif;
+    n%+=1;
+wend;
+return 1;
+end;
+Func MoveWindow% () 'called when previous an next buttons are clicked in manual mode
+var XlowV:=XLow();
+var XHighV:=XHigh();
+docase
+case DlgButton() =3 then
+    if XHighV+(XHighV-XlowV) < MaxTime() then
+        XRange(XHighV,XHighV+(XHighV-XlowV));
+    else
+        XRange(MaxTime()-(XHighV-XlowV),MaxTime());
+    endif;    
+    Draw();
+case DlgButton() =4 then
+    if XlowV-(XHighV-XlowV) > 0 then
+        XRange(XlowV-(XHighV-XlowV),XlowV);
+    else
+        XRange(0,XHighV-XlowV);
+    endif;    
+endcase;
+Draw();
+SetThresholdCursor();
+Cursor(5,XLow()+(XHigh()-XLow())/2);
+return 1;   'keep dialog active
+End;
+Proc MoveWindowTo (where)   'moves window to where at Xlow without changing the scaling
+If where >=0 then
+    XRange(where,where+(XHigh()-Xlow()));
+    Draw();
+endif;
+end;
+Proc MovetoEvent (event%)   ' moves View to event (Index starts at 0)
+CurrentPeak%:=event%;
+XRange(peaks[CurrentPeak%]-0.15,peaks[CurrentPeak%]+0.15);
+Optimise(-2);
+Draw();
+Cursor(1,peaksLeft[event%]);
+Cursor(2,peaksRight[event%]);
+end;
+Proc SetThresholdCursor ()
+var mean;   'saves the mean channel value of the currently displayed window
+mean:=ChanMeasure(ch%,2,XLow(),XHigh());
+if HCursorExists(1) then    'check if Cursor exists if not create it
+    if peakdirection% = 1 then      'set the threshold depending on peak direktion and the current mean value of the window
+        HCursor(1,mean - noiseSD*thresholdCursorSD);
+    else
+        HCursor(1,mean + noiseSD*thresholdCursorSD);
+    endif;
+else
+    if peakdirection% = 1 then      'set the threshold depending on peak direktion and the current mean value of the window
+        HCursorNew(ch%,mean - noiseSD*thresholdCursorSD);
+    else
+        HCursorNew(ch%,mean + noiseSD*thresholdCursorSD);
+    endif;
+    HCursorLabel(4,1,"Threshold");
+endif;
+end;
+Proc GoToPeakDlg () 'create peak review dialog
+DlgCreate("Peak Review");
+TextItem1%:=DlgText(PeakPropertiesStr$(CurrentPeak%),0,1,20);
+DlgLabel(1,ApprovesStatus$(CurrentPeak%),0,5);
+DlgButton(2,"   NOPE!   |0x20",ChangeApproval%,10.5,6);
+DlgButton(3,"Previous|0x25",Changeview%,5,7);
+DlgButton(4,"Next|0x27",Changeview%,-5,7);
+DlgButton(5,"Pick Manual",ManualModeDlg%,10,8);
+DlgButton(0,"");
+DlgButton(1,"Close");
+DlgAllow(319,0,DlgChanged%); 
+DlgShow(dummy%);
+end;
+Func Changeview%()  'called when user presses previous/next buttons and changes view to next detected event
+if DlgButton() =3 then
+    if CurrentPeak% > 0 then
+        MovetoEvent(CurrentPeak%-1);
+    endif
+else
+    if CurrentPeak% < len(peaks)-1 then
+        MovetoEvent(CurrentPeak%+1);
+    endif    
+endif;
+DlgValue$(1,ApprovesStatus$(CurrentPeak%));
+DlgValue$(TextItem1%,PeakPropertiesStr$(CurrentPeak%));
+if  approved%[CurrentPeak%] = 1 then    'change the label of the approval change button
+    DlgValue$(-2,"Reject");
+else
+    DlgValue$(-2,"Approve");
+endif;
+return 1;
+end;
+Func ChangeApproval%()  'called when the user presses the button to change the approval status of a peak in peak review
+If approved%[CurrentPeak%] = 1 then
+    approved%[CurrentPeak%]:=0;
+    DlgValue$(1,ApprovesStatus$(CurrentPeak%));
+    DlgValue$(-2,"Approve");
+else
+    approved%[CurrentPeak%]:=1;
+    DlgValue$(1,ApprovesStatus$(CurrentPeak%));
+    DlgValue$(-2,"Reject");
+endif
+return 1;
+end;
+Func ApprovesStatus$ (peak%)    'returns the approval status of a peak as a string
+var status$;
+docase
+case approved%[peak%] = 1 then
+    status$:="APPROVED";
+case approved%[peak%] = 0 then
+    status$:="REJECTED";
+case approved%[peak%] = -1 then
+    status$:="REJECTED BY SYSTEM";
+case approved%[peak%] = -2 then 
+    status$:="50 Hz noise";    
+endcase
+return status$;
+end;
+Func PeakPropertiesStr$ (peak%);    'returns a peak properties of the current peak as text, with each property in a new line
+'---variable declaration---
+var PeakProperties$;
+var XUnit$:=XUnits$();
+var YUnit$:=ChanUnits$(ch%);
+'--- function code---
+PeakProperties$:=
+"Peak Number: "+Str$(CurrentPeak%)+"\n"
++"Peak Time: "+Str$(peaks[CurrentPeak%])+" "+XUnit$+"\n"
++"Peak Amplitude: "+Str$(amplitudes[CurrentPeak%])+" "+YUnit$+"\n"
++"Peak Slope: "+Str$(slopes[CurrentPeak%])+" "+YUnit$+"/"+XUnit$+"\n"
++"Peak Decay Time: "+Str$(decay[CurrentPeak%])+" "+XUnit$+"\n"
++"Peak Half-maximum width: "+Str$(peakhalfwidth[CurrentPeak%])+" "+XUnit$+"\n";
+return PeakProperties$;
+end;
+Proc RemoveRejectedMarkers ()   'deletes markers of rejected peaks
+var n%;
+for n%:=0 to len(approved%)-1 do
+    if approved%[n%] <> 1 then
+        MemDeleteTime(marker%,0,peaks[n%]);
+    endif;    
+next;
+end;
+Proc Autoreject ()  'flags peaks as rejected that don't match certain user defined criteria
+var n%; 'counter 
+var strike%;
+var n2%;
+'---function code----
+for n%:=0 to len(approved%)-1 do
+    if HWMinMax[0] > 0 then
+        if peakhalfwidth[n%] < HWMinMax[0] then 'if smaller than minimum half-width
+            approved%[n%]:=-1;
+            continue;
+        endif;
+    endif;        
+    if HWMinMax[1] > 0 then
+        if peakhalfwidth[n%] > HWMinMax[1] then 'if bigger than maximum half-width
+            approved%[n%]:=-1;
+            continue;
+        endif;
+    endif;       
+    if AmpMinMax[0] > 0 then
+        if amplitudes[n%] < AmpMinMax[0] then   'if smaller than minimum amplitude
+            approved%[n%]:=-1;
+            continue;
+        endif; 
+    endif;    
+    if AmpMinMax[1] > 0 then
+        if amplitudes[n%] > AmpMinMax[1] then   'if bigger than maximum amplitude
+            approved%[n%]:=-1;
+            continue;
+        endif;
+    endif;    
+    if SlopeMinMax[0] > 0 then
+        if slopes[n%] < SlopeMinMax[0] then 'if smaller than minimum slope
+            approved%[n%]:=-1;
+            continue;
+        endif
+    endif;    
+    if SlopeMinMax[1] > 0 then
+        if slopes[n%] > SlopeMinMax[1] then 'if bigger than maximum slope
+            approved%[n%]:=-1;
+            continue;
+        endif
+    endif;
+    '---50 Hz noise detection code---
+    if acNoiseDetect% = 1 then   'if  50 Hz noise detection is turned on
+        if approved%[n%]<> -1 then  'if peak has not been rejected automatically yet
+            n2%:=1;
+            if n%+n2% < len(approved%) then
+                while peaks[n%+n2%] - peaks[n%+n2%-1] > 0.02 - acNoiseTolerance AND peaks[n%+n2%] - peaks[n%+n2%-1] < 0.02 + acNoiseTolerance do
+                    strike%+=1;
+                    if strike% >= acPeakCount% then break endif;
+                    n2%+=1;
+                    if n%+n2% >= len(approved%) then break endif;
+                wend;
+            endif;
+            n2%:=1;
+            if n%-n2% > 0 then
+                while peaks[n%-n2%+1] - peaks[n%-n2%] > 0.02 - acNoiseTolerance AND peaks[n%-n2%+1] - peaks[n%-n2%] < 0.02 + acNoiseTolerance do
+                    strike%+=1;
+                    if strike% >= acPeakCount% then break endif;
+                    n2%+=1;
+                    if n%-n2% < 0 then break endif;
+                wend;
+            endif;                
+            if strike% >= acPeakCount% then approved%[n%]:=-2 endif; 'if at least acPeak count consecutive peaks happened at 50 Hz flag as noise
+            strike%:=0;
+        endif; 
+    endif;    
+next;
+end;
+Func DlgChanged%(item%)
+docase
+case item% = 0 then 'Dialog initialised
+    if  approved%[CurrentPeak%] = 1 then
+        DlgValue$(-2,"Reject");
+    else
+        DlgValue$(-2,"Approve");
+    endif;    
+endcase;
+return 1;
+end;
+Func ManualDlgChanged%(item%)   'Gets calles when values in the manual detection dialogue are changed or it is initialized
+docase
+case item% = 0 then 'Dialog initialised
+    
+endcase;
+return 1;
+end;
+Func DoManualToolbar ()
+ToolbarSet(1,"Setting",Settings%);
+return Toolbar("MiniMonster",319);
+end;
+func Settings% ()   'call and update settings dialog
+var settingsreturn%:=SettingsDlg%();    'get dialog returnvalue
+
+while settingsreturn% = -5 do   'if dialog need to be refreshed
+    settingsreturn%:=SettingsDlg%();
+wend;
+
+if settingsreturn% = 0 then 'if cancel was pressed
+    quit%:=1;
+    View(protocol%).Print("***Script terminated***"+"\n");
+endif;
+
+return 1;
+end;
+Func SettingsDlg% ()   'displays settings dialog
+
+var dlgElement%:=1;    'iterates element position
+var dlgItem%:=1;       'iterates dialog item number
+var dlgreturn%;
+
+DlgCreate("MiniMonster Settings");
+DlgButton(2,"Load settings",LoadSettings%,2,dlgElement%);
+DlgButton(3,"Save settings",SaveSettings%,-2,dlgElement%);
+dlgElement%+=1;
+DlgGroup("General Settings",1,dlgElement%,60,7);
+dlgElement%+=1;
+DlgChan(dlgItem%,"Channel to analyze",1,-3.5,dlgElement%);
+dlgItem%+=1;
+dlgElement%+=1;
+DlgList(dlgItem%,"Peak direction","positive|negative",2,-3.5,dlgElement%);
+dlgItem%+=1;
+dlgElement%+=1;
+DlgList(dlgItem%,"Peak detection mode","manual|automatic",2,-3.5,dlgElement%);
+dlgItem%+=1;
+dlgElement%+=1;
+DlgList(dlgItem%,"Automatic peak detection method",PeakDetectionModuleList$,len(PeakDetectionModuleList$),-3.5,dlgElement%);
+dlgItem%+=1;
+dlgElement%+=1;
+DlgReal(dlgItem%,"Time range to look for peak on/offset (in s)",0,Maxtime(ch%),-3.5,dlgElement%,0.5);
+dlgItem%+=1;
+dlgElement%+=1;
+DlgButton(4,"Filter and smoothing settings",FilterSettings%,2,dlgElement%);
+dlgElement%+=1;
+
+DlgGroup("Automatic detection mode",1,dlgElement%,60,10);
+dlgElement%+=1;
+DlgText("Mean Value: "+Str$(mean,3,3)+" "+ChanUnits$(ch%),2,dlgElement%);
+dlgElement%+=1;
+DlgText("Noise SD: "+Str$(noiseSD,3,3)+" "+ChanUnits$(ch%),2,dlgElement%);
+dlgElement%+=1;
+DlgList(dlgItem%,"Keep processed channels","no|yes",2,-3.5,dlgElement%);
+dlgItem%+=1;
+dlgElement%+=1;
+DlgReal(dlgItem%,"Threshold for peaks (in multiples of SD)",0,10,-3.5,dlgElement%,ThresholdList$);
+dlgItem%+=1;
+dlgElement%+=1;
+DlgReal(dlgItem%,"Time range for calculating mean (in s)",0,Maxtime(ch%),-3.5,dlgElement%,0.5);
+dlgItem%+=1;
+dlgElement%+=1;
+DlgReal(dlgItem%,"Minimum time between peaks (in s)",0,Maxtime(ch%),-3.5,dlgElement%,0.001);
+dlgItem%+=1;
+dlgElement%+=1;
+DlgReal(dlgItem%,"Time range for slope (in s)",0,Maxtime(ch%),-3.5,dlgElement%,0.001);
+dlgItem%+=1;
+dlgElement%+=1;
+DlgReal(dlgItem%,"Slope threshold (in "+ChanUnits$(ch%)+"/s)",0,10000000,-3.5,dlgElement%,50);
+dlgItem%+=1;
+dlgElement%+=1;
+DlgReal(dlgItem%,"Time slope has to stay cross threshold (in s)",0,Maxtime(ch%),-3.5,dlgElement%,0.001);
+dlgItem%+=1;
+dlgElement%+=1;
+
+DlgGroup("Manual detection mode",1,dlgElement%,60,3);
+dlgElement%+=1;
+DlgReal(dlgItem%,"Time for Cursor to look for peak",0,MaxTime(),-3.5,dlgElement%);
+dlgItem%+=1;
+dlgElement%+=1;
+DlgReal(dlgItem%,"Threshold Cursor",0,10,-3.5,dlgElement%,0.5);
+dlgItem%+=1;
+dlgElement%+=1;
+
+DlgGroup("Additional Settings",1,dlgElement%,60,4);
+dlgElement%+=1;
+DlgButton(5,"Spike rejection settings",SpikeRejectionSetting%,2,dlgElement%);
+dlgElement%+=1;
+DlgButton(6,"Spike parameters settings",SpikeParameterSetting%,2,dlgElement%);
+dlgElement%+=1;
+DlgButton(7,"Noise detection settings",NoiseRejectionSetting%,2,dlgElement%);
+dlgElement%+=1;
+
+'DlgButton(0,"Cancel",SettingsCancel%);
+DlgAllow(319,0,SettingChanged%);
+dlgreturn%:=DlgShow(ch%,peakdirection%,Mode%,PeakDetectionModule%,searchrange,keepprocessed%,thresholdSD,avginterval,MinPeakDistance,sloperange,SlopeDetect,ManualCursorSnap,thresholdCursorSD);
+return dlgreturn%;
+end;
+Func SettingChanged% (item%);   'called when the user changes a value in the settings dialog
+docase
+case item% = 0 then 'Dialog initialised
+    docase
+    case DlgValue(3) = 0 then 'manual mode
+        DlgEnable(0,4);
+        DlgEnable(0,7);
+        DlgEnable(0,8);
+        DlgEnable(0,9);
+        DlgEnable(0,10);
+        DlgEnable(0,11);
+    case DlgValue(3) = 1 then 'auto mode
+        DlgEnable(0,13);
+        DlgEnable(0,14);
+        docase
+        case DlgValue(4) = 0 then 'progressive maximum module
+            DlgEnable(1,6);
+            DlgEnable(1,7);
+            DlgEnable(1,8);
+            DlgEnable(1,9);
+            DlgEnable(0,10);
+            DlgEnable(0,11);
+            DlgEnable(0,12);
+        case DlgValue(4) = 1 then 'slope based module
+            DlgEnable(1,6);
+            DlgEnable(1,10);
+            DlgEnable(1,11);
+            DlgEnable(1,12);
+            DlgEnable(0,7);
+            DlgEnable(0,8);
+            DlgEnable(0,9);
+        endcase
+    endcase
+case item% = 1 then 'Change channel
+    ch%:=DlgValue(1);    
+    return -5;    
+case item% = 2 then 'Change in peak direction
+case item% = 3 then 'Change in detection mode
+    docase
+    case DlgValue(3) = 0 then 'manual mode
+        DlgEnable(0,4);
+        DlgEnable(0,6);
+        DlgEnable(0,7);
+        DlgEnable(0,8);
+        DlgEnable(0,9);
+        DlgEnable(0,10);
+        DlgEnable(0,11);
+        DlgEnable(0,12);
+        DlgEnable(1,13);
+        DlgEnable(1,14);
+    case DlgValue(3) = 1 then 'auto mode
+        DlgEnable(0,13);
+        DlgEnable(0,14);
+        DlgEnable(1,4);
+        DlgEnable(1,6);
+        docase
+        case DlgValue(4) = 0 then 'progressive maximum module
+            DlgEnable(1,7);
+            DlgEnable(1,8);
+            DlgEnable(1,9);
+        case DlgValue(4) = 1 then 'slope based module
+            DlgEnable(1,10);            
+            DlgEnable(1,11);
+            DlgEnable(1,12);
+        endcase
+    endcase
+case item% = 4 then 'Change in automatic peak detection module   
+    docase
+    case DlgValue(4) = 0 then 'progressive maximum module
+        DlgEnable(0,10);
+        DlgEnable(0,11);
+        DlgEnable(0,12);
+        DlgEnable(1,6);
+        DlgEnable(1,7);
+        DlgEnable(1,8);
+        DlgEnable(1,9);
+    case DlgValue(4) = 1 then 'slope based module
+        DlgEnable(1,6);
+        DlgEnable(1,10);
+        DlgEnable(1,11);
+        DlgEnable(1,12);
+        DlgEnable(0,7);
+        DlgEnable(0,8);
+        DlgEnable(0,9);
+    endcase    
+endcase;
+return 1;
+end;
+Func SettingsCancel%()  'deprecated
+quit%:=1;
+View(protocol%).Print("***Script terminated***"+"\n");
+return -1;
+end;
+Func FilterSettings% () 'Dialog to set filter and smoothing settings
+
+DlgCreate("Filter and Smoothing Settings");
+DlgGroup("Filters",1,1,60,9);
+DlgButton(2,"Highpass Filter: "+filterHighpassStatus$,FilterSmoothingSwitch%,2,2);
+DlgReal(1,"Cut-off frequency",0,0.5*SamplingRate,-3.5,3,50);
+DlgReal(2,"Transition Gap",0,0.1*SamplingRate,-3.5,4,50);
+DlgReal(3,"Attenuation (dB)",0,100,-3.5,5,5);
+DlgButton(3,"Lowpass Filter: "+filterLowpassStatus$,FilterSmoothingSwitch%,2,6);
+DlgReal(4,"Cut-off frequency",0,0.5*SamplingRate,-3.5,7,50);
+DlgReal(5,"Transition Gap",0,0.1*SamplingRate,-3.5,8,50);
+DlgReal(6,"Attenuation (dB)",0,100,-3.5,9,5);
+
+DlgGroup("Smoothing",1,10,60,3);
+DlgButton(4,"Smoothing: "+smoothingStatus$,FilterSmoothingSwitch%,2,11);
+DlgReal(7,"Time range for smoothing (in s)",0,Maxtime(ch%),-3.5,12,0.001);
+DlgAllow(7,updateFilterSmoothingDlg%);
+DlgShow(filterHighpassFreq,filterHighpassTransition,filterHighpassAttenuation,filterLowpassFreq,filterLowpassTransition,filterLowpassAttenuation,smoothingrange);
+return 1;
+end;
+Func FilterSmoothingSwitch% ()
+var buttonpressed%:=DlgButton();    'get which button was pressed
+docase
+case buttonpressed% = 2 then    'if highpassfilter toggle has been pressed
+    if filterHighpassStatus$ = "ON" then
+        filterHighpassStatus$:="OFF";
+    else
+        filterHighpassStatus$:="ON";
+    endif;
+    DlgValue$(-buttonpressed%,"Highpass Filter: "+filterHighpassStatus$);   'update button text
+    
+case buttonpressed% = 3 then    'if lowpassfilter toggle has been pressed
+    if filterLowpassStatus$ = "ON" then
+        filterLowpassStatus$:="OFF";
+    else
+        filterLowpassStatus$:="ON";
+    endif;
+    DlgValue$(-buttonpressed%,"Lowpass Filter: "+filterLowpassStatus$); 'update button text
+    
+case buttonpressed% = 4 then    'if smoothing toggle has been pressed
+    if smoothingStatus$ = "ON" then
+        smoothingStatus$:="OFF";
+    else
+        smoothingStatus$:="ON";
+    endif;
+    DlgValue$(-buttonpressed%,"Smoothing: "+smoothingStatus$); 'update button text
+endcase;
+
+return 1;
+end;
+Func updateFilterSmoothingDlg%()
+if filterHighpassStatus$ = "ON" then    'update highpassfilter settings
+   DlgEnable(1,1); 'enable highpass settings
+   DlgEnable(1,2);
+   DlgEnable(1,3);
+else
+   DlgEnable(0,1); 'disable highpass settings
+   DlgEnable(0,2);
+   DlgEnable(0,3); 
+endif;
+
+if filterLowpassStatus$ = "ON" then    'update lowpassfilter settings
+   DlgEnable(1,4); 'enable highpass settings
+   DlgEnable(1,5);
+   DlgEnable(1,6);
+else
+   DlgEnable(0,4); 'disable highpass settings
+   DlgEnable(0,5);
+   DlgEnable(0,6); 
+endif;
+
+if smoothingStatus$ = "ON" then    'update smoothing settings
+   DlgEnable(1,7); 'enable smoothing settings
+else
+   DlgEnable(0,7); 'disable smoothing settings
+endif;
+
+return 1;
+end;
+Func SpikeRejectionSetting%()   'settings dialog for spike rejection settings
+
+DlgCreate("Spike Rejection Settings");
+DlgText("Set parameters for automatic rejection of spikes. Setting a parameter to 0 will turn it off.",-3.5,1);
+DlgReal(1,"Minimum halfmaximum-width (in s)",0,Maxtime(ch%),-3.5,2);
+DlgReal(2,"Maximum halfmaximum-width (in s)",0,Maxtime(ch%),-3.5,3);
+DlgReal(3,"Minimum amplitude (in "+ChanUnits$(ch%)+")",0,1000000000,-3.5,4);
+DlgReal(4,"Maximum amplitude (in "+ChanUnits$(ch%)+")",0,1000000000,-3.5,5);
+DlgReal(5,"Minimum initial slope (in "+ChanUnits$(ch%)+"/s)",0,1000000000,-3.5,6);
+DlgReal(6,"Maximum initial slope (in "+ChanUnits$(ch%)+"/s)",0,1000000000,-3.5,7);
+
+DlgShow(HWMinMax,AmpMinMax,SlopeMinMax);
+return 1;   'keep calling dialog open
+end;
+Func SpikeParameterSetting%()   'settings dialog for spike parameters settings
+
+DlgCreate("Spike Parameter Settings");
+DlgReal(1,"Measure Slope/Rise from (in % of max. amplitude)",1,100,-3.5,1);
+DlgReal(2,"Measure Slope/Rise to (in % of max. amplitude)",1,100,-3.5,2);
+DlgReal(3,"Measure decay time to (in % of max. amplitude)",1,100,-3.5,3);
+DlgReal(4,"Time range to measure mean frequency (in s)",10,MaxTime(),-3.5,4);
+
+DlgShow(SlopeRiseFrom,SlopeRiseTo,decaylimit,Mt);
+return 1;   'keep calling dialog open
+end;
+Func NoiseRejectionSetting%()   'settings dialog for noise rejection settings
+
+if acNoiseDetect% = 1 then  'set the current label
+    acNoiseDetect$:="ON"    
+else
+    acNoiseDetect$:="OFF"
+endif;
+
+DlgCreate("Noise Detection Settings");
+DlgGroup("50 Hz Noise",1,1,60,4);
+DlgButton(2,"50Hz noise detection: "+acNoiseDetect$,NoiseDetectOnOffSwitch%,2,2);
+DlgInteger(1,"50 Hz noise detection peak threshold",0,100,-3.5,3);
+DlgReal(2,"50 Hz noise detection interval tolerance",0,1,-3.5,4);
+
+DlgShow(acPeakCount%,acNoiseTolerance);
+return 1;   'keep calling dialog open
+end;
+Func NoiseDetectOnOffSwitch%()  'Button function to switch 50 Hz detection on or off
+if acNoiseDetect% = 1 then
+    acNoiseDetect%:=0;
+    acNoiseDetect$:="OFF"    
+else
+    acNoiseDetect%:=1;
+    acNoiseDetect$:="ON"
+endif;
+DlgValue$(-2,"50Hz noise detection: "+acNoiseDetect$);
+return 1;
+end
+Func LoadSettings%()    'Button function to load a settings file
+var settings%:=FileOpen("",8,0,"Open a MiniMonster settings File");
+View(file%);
+var loaded%:=ReadConfig%(ConfigArr,settings%);
+if loaded% > 0 then ReadConfigArr(ConfigArr) endif;
+return -5;
+end;
+Func SaveSettings%()    'Button function to save a settings file
+var settings%:=FileNew(1); 'create a new text file
+View(file%);
+LiveUpdateSettings%();
+WriteConfigArr(ConfigArr);
+WriteConfig%(ConfigArr,settings%);
+return 1;
+end;
+Func LiveUpdateSettings%()  'When called will update global vars from current vlues in settings dlg
+ch%:=DlgValue(1);
+peakdirection%:=DlgValue(2);
+Mode%:=DlgValue(3);
+PeakDetectionModule%:=DlgValue(4);
+searchrange:=DlgValue(5);
+keepprocessed%:=DlgValue(6);
+thresholdSD:=DlgValue(7);
+avginterval:=DlgValue(8);
+MinPeakDistance:=DlgValue(9);
+sloperange:=DlgValue(10);
+SlopeDetect[0]:=DlgValue(11);
+SlopeDetect[1]:=DlgValue(12);
+ManualCursorSnap:=DlgValue(13);
+thresholdCursorSD:=DlgValue(14);
+return 1;
+end;
+Proc WriteHeader (protocol%)    'writes the chosen settings in the protocol
+var YUnit$:=ChanUnits$(ch%);
+var File$:=FileName$(0);
+var autorej%:=0;    'counter if a autorejection setting has been set
+View(protocol%).Print("Analysis performed on: "+File$+"\n");
+View(protocol%).Print("Analysed Channel: "+Str$(ch%)+"\n");
+View(protocol%).Print("Mean Channel value: "+Str$(mean,3,2)+" "+YUnit$+"\n");
+View(protocol%).Print("Min-Max Noise: "+Str$(noise)+" "+YUnit$+"\n");
+View(protocol%).Print("SD of Noise: "+Str$(noiseSD)+" "+YUnit$+"\n");
+
+docase
+case Mode% = 0 then
+    View(protocol%).Print("Detection Mode: Manual"+"\n");
+    View(protocol%).Print("Threshold Cursor set to (in multiples of SD): "+Str$(thresholdCursorSD)+"\n");    
+case Mode% = 1 then
+    View(protocol%).Print("Detection Mode: Automatic"+"\n");
+    View(protocol%).Print("Detection Module: "+PeakDetectionModuleList$[PeakDetectionModule%]+"\n");
+    docase
+    case PeakDetectionModule% = 0 then
+        View(protocol%).Print("Threshold: "+Str$(threshold)+" "+YUnit$+"\n");
+        View(protocol%).Print("Threshold as multiples of SD: "+Str$(thresholdSD)+"\n");
+        View(protocol%).Print("Interval for calculating mean: "+Str$(avginterval)+"s"+"\n");
+        View(protocol%).Print("Range for searching peak on/offset: "+Str$(searchrange)+"s"+"\n");
+    case PeakDetectionModule% = 1 then
+        View(protocol%).Print("Slope Range: "+Str$(sloperange)+" "+"s"+"\n");
+        View(protocol%).Print("Slope Threshold: "+Str$(SlopeDetect[0])+" "+YUnit$+"/s"+"\n");
+        View(protocol%).Print("Time cross slope Threshold: "+Str$(SlopeDetect[1])+" s"+"\n");
+    endcase
+case Mode% = 2 then
+    View(protocol%).Print("Detection Mode: Peaks imported from marker"+"\n");    
+endcase
+
+if filterHighpassStatus$ = "ON" then    'print highpass filter settings
+    View(protocol%).Print("Highpass filter: "+filterHighpassStatus$+"\n");
+    View(protocol%).Print("Highpass filter frequency: "+Str$(filterHighpassFreq)+" Hz"+"\n");
+    View(protocol%).Print("Highpass filter transition gap: "+Str$(filterHighpassTransition)+" Hz"+"\n");
+    View(protocol%).Print("Highpass filter attenuation: "+Str$(filterHighpassAttenuation)+" dB"+"\n");
+else    
+    View(protocol%).Print("Highpass filter: "+filterHighpassStatus$+"\n");
+endif;
+
+if filterLowpassStatus$ = "ON" then    'print lowpass filter settings
+    View(protocol%).Print("Lowpass filter: "+filterLowpassStatus$+"\n");
+    View(protocol%).Print("Lowpass filter frequency: "+Str$(filterLowpassFreq)+" Hz"+"\n");
+    View(protocol%).Print("Lowpass filter transition gap: "+Str$(filterLowpassTransition)+" Hz"+"\n");
+    View(protocol%).Print("Lowpass filter attenuation: "+Str$(filterLowpassAttenuation)+" dB"+"\n");
+else    
+    View(protocol%).Print("Lowpass filter: "+filterLowpassStatus$+"\n");
+endif;
+
+if smoothingStatus$ = "ON" then
+    View(protocol%).Print("Smoothing: "+smoothingStatus$+"\n");
+    View(protocol%).Print("Smoothing range: "+Str$(smoothingrange)+" s"+"\n");
+else  
+    View(protocol%).Print("Smoothing: "+smoothingStatus$+"\n");
+endif;
+
+View(protocol%).Print("Slope/Rise measured as "+Str$(SlopeRiseFrom)+"% to "+Str$(SlopeRiseTo)+"% of maximum amplitude."+"\n");
+View(protocol%).Print("Decaytime measured from peak to "+Str$(decaylimit)+"% of maximum amplitude."+"\n");
+
+View(protocol%).Print("Peak rejection settings:"+"\n");
+if HWMinMax[0] <> 0 then
+    View(protocol%).Print("Minimum peak half-wifth: "+Str$(HWMinMax[0])+" s"+"\n");
+    autorej%+=1;
+endif;
+if HWMinMax[1] <> 0 then
+    View(protocol%).Print("Maximum peak half-wifth: "+Str$(HWMinMax[1])+" s"+"\n");
+    autorej%+=1;
+endif;
+if AmpMinMax[0] <> 0 then
+    View(protocol%).Print("Minimum peak amplitude: "+Str$(AmpMinMax[0])+" "+YUnit$+"\n");
+    autorej%+=1;
+endif;
+if AmpMinMax[1] <> 0 then
+    View(protocol%).Print("Maximum peak amplitude: "+Str$(AmpMinMax[1])+" "+YUnit$+"\n");
+    autorej%+=1;
+endif;
+if SlopeMinMax[0] <> 0 then
+    View(protocol%).Print("Minimum peak initial slope: "+Str$(SlopeMinMax[0])+" "+YUnit$+"/s"+"\n");
+    autorej%+=1;
+endif;
+if SlopeMinMax[1] <> 0 then
+    View(protocol%).Print("Maximum peak initial slope: "+Str$(SlopeMinMax[1])+" "+YUnit$+"/s"+"\n");
+    autorej%+=1;
+endif;
+if autorej% = 0  then
+    View(protocol%).Print("No criteria for peak rejection set."+"\n");
+endif;
+
+if acNoiseDetect% = 1 then 'if noise detection is turned on
+    View(protocol%).Print("Noise detection: ON"+"\n"); 
+    View(protocol%).Print("50 Hz noise detection peak threshold: "+Str$(acPeakCount%)+"\n");
+    View(protocol%).Print("50 Hz noise detection interval tolerance: "+Str$(acNoiseTolerance)+" s"+"\n");
+else
+    View(protocol%).Print("Noise detection: OFF"+"\n");    'if noise dectection is turned off
+endif;
+
+return;
+end
+Proc WritePeaksList (protocol%) 'writes a list of all detected peaks in the protocol
+var n%;
+var autorejectedcount%:=0;
+var rejectedcount%:=0;
+var approvedcount%:=0;
+var XUnit$:=XUnits$();
+var YUnit$:=ChanUnits$(ch%);
+View(protocol%).Print("\n"+"List of approved Events:"+"\n");
+View(protocol%).Print("Event"+"\t");
+View(protocol%).Print("Time "+"["+XUnit$+"]"+"\t");
+View(protocol%).Print("Amplitude "+"["+YUnit$+"]"+"\t");
+View(protocol%).Print("Half-Maximum width "+"["+XUnit$+"]"+"\t");
+View(protocol%).Print("Initial Slope or Rise "+"["+YUnit$+"/"+XUnit$+"]"+"\t");
+View(protocol%).Print("Decay time "+"["+XUnit$+"]"+"\t"+"\n");
+for n%:=0 to len(peaks)-1 do
+    if approved%[n%] = 1 then
+        approvedcount%+=1; 
+        View(protocol%).Print("Event "+Str$(n%+1)+"\t"); 'Event number
+        View(protocol%).Print(Str$(peaks[n%])+"\t");    'Event time code
+        View(protocol%).Print(Str$(amplitudes[n%])+"\t");   'peak amplitude
+        View(protocol%).Print(Str$(peakhalfwidth[n%])+"\t"); 'peak halfmaximum width
+        View(protocol%).Print(Str$(slopes[n%])+"\t");       'slope or rise
+        View(protocol%).Print(Str$(decay[n%])+"\t"+"\n");        'decay time
+    endif;   
+next;
+View(protocol%).Print("\n"+"List of Events rejected by User:"+"\n");
+View(protocol%).Print("Event"+"\t");
+View(protocol%).Print("Time "+"["+XUnit$+"]"+"\t");
+View(protocol%).Print("Amplitude "+"["+YUnit$+"]"+"\t");
+View(protocol%).Print("Half-Maximum width "+"["+XUnit$+"]"+"\t");
+View(protocol%).Print("Initial Slope or Rise "+"["+YUnit$+"/"+XUnit$+"]"+"\t");
+View(protocol%).Print("Decay time "+"["+XUnit$+"]"+"\t"+"\n");
+for n%:=0 to len(peaks)-1 do
+    if approved%[n%] = 0 then
+        rejectedcount%+=1;
+        View(protocol%).Print("Event "+Str$(n%+1)+"\t"); 'Event number
+        View(protocol%).Print(Str$(peaks[n%])+"\t");    'Event time code
+        View(protocol%).Print(Str$(amplitudes[n%])+"\t");   'peak amplitude
+        View(protocol%).Print(Str$(peakhalfwidth[n%])+"\t"); 'peak halfmaximum width
+        View(protocol%).Print(Str$(slopes[n%])+"\t");       'slope or rise
+        View(protocol%).Print(Str$(decay[n%])+"\t"+"\n");        'decay time
+    endif;    
+next
+if rejectedcount% = 0 then View(protocol%).Print("none"+"\n") endif;
+View(protocol%).Print("\n"+"List of Events rejected by System:"+"\n");
+View(protocol%).Print("Event"+"\t");
+View(protocol%).Print("Time "+"["+XUnit$+"]"+"\t");
+View(protocol%).Print("Amplitude "+"["+YUnit$+"]"+"\t");
+View(protocol%).Print("Half-Maximum width "+"["+XUnit$+"]"+"\t");
+View(protocol%).Print("Initial Slope or Rise "+"["+YUnit$+"/"+XUnit$+"]"+"\t");
+View(protocol%).Print("Decay time "+"["+XUnit$+"]"+"\t"+"\n");
+for n%:=0 to len(peaks)-1 do
+    if approved%[n%] = -1 then
+        autorejectedcount%+=1;
+        View(protocol%).Print("Event "+Str$(n%+1)+"\t"); 'Event number
+        View(protocol%).Print(Str$(peaks[n%])+"\t");    'Event time code
+        View(protocol%).Print(Str$(amplitudes[n%])+"\t");   'peak amplitude
+        View(protocol%).Print(Str$(peakhalfwidth[n%])+"\t"); 'peak halfmaximum width
+        View(protocol%).Print(Str$(slopes[n%])+"\t");       'slope or rise
+        View(protocol%).Print(Str$(decay[n%])+"\t"+"\n");        'decay time
+    endif;    
+next
+if autorejectedcount% = 0 then View(protocol%).Print("none"+"\n") endif;
+View(protocol%).Print("\n"+"Events rejected by System: "+Str$(autorejectedcount%)+"\n"+"Events rejected by user: "+Str$(rejectedcount%)+"\n"+"Events approved by user: "+Str$(approvedcount%)+"\n");
+end;
+Proc WriteMeansList (protocol%) 'writes a list of means according to interval set by Mt
+'---variable declaration---
+var n%:=0; 'counter
+var peaksnumber%;   'stores the number of peaks in the timerange
+var peaksamp;   'stores the average amplitude of peaks in the timerange
+var time:=peaks[0];
+var timelimitfrom:=0; 'stores leftend of current time range
+var timelimitto:=Mt; 'stores rightend of current time range
+'---function code---
+View(protocol%).Print("\n"+"List of mean frequency and amplitudes:"+"\n");
+View(protocol%).Print("Time [s]"+"\t"+"Peaks"+"\t"+"Frequency [Hz]"+"\t"+"Amplitude ["+View(file%).ChanUnits$(ch%)+"]"+"\n");
+while timelimitto < MaxTime(ch%) do
+    if n% < len(peaks) then
+        while time < timelimitto do
+            if approved%[n%] = 1 then
+                peaksnumber%+=1;
+                peaksamp+=amplitudes[n%];
+            endif;
+            n%+=1;
+            if n% >= len(peaks) then
+                break; 
+            endif;
+            time:=peaks[n%];        
+        wend
+    endif
+    if peaksnumber% = 0 then    'prevent divide by zero in average amplitude
+        peaksamp:=0;
+    else
+        peaksamp:=(peaksamp/peaksnumber%);
+    endif;
+    View(protocol%).Print(Str$(timelimitfrom)+" - "+Str$(timelimitto)+"\t"+Str$(peaksnumber%)+"\t"+Str$(peaksnumber%/Mt)+"\t"+Str$(peaksamp)+"\n");
+    timelimitfrom:=timelimitto;
+    timelimitto+=Mt;
+    peaksnumber%:=0;
+    peaksamp:=0;
+wend;
+return;
+end;
+Func WriteMeans (protocol%) 'writes the means over full time in protocol
+'---variable declarations---
+var time:=MaxTime(ch%);
+var XUnit$:=XUnits$();
+var YUnit$:=ChanUnits$(ch%);
+var meanAmpl:=GetMeanApproved(amplitudes,0);
+var meanHw:=GetMeanApproved(peakhalfwidth,0);
+var meanSlopeRise:=GetMeanApproved(slopes,2);
+var meanDecay:=GetMeanApproved(decay,0);
+'---function code---
+View(protocol%).Print("\n"+"Mean Values:"+"\n");
+View(protocol%).Print("Time analyzed: "+Str$(time)+" s"+"\n");
+View(protocol%).Print("Event Frequency: "+Str$(ArrNumberofValuesInt%(approved%,1)/time)+" Hz"+"\n");
+View(protocol%).Print("Amplitude: "+Str$(meanAmpl)+" "+YUnit$+"\n");
+View(protocol%).Print("Half-maximum width: "+Str$(meanHw)+" "+XUnit$+"\n");
+View(protocol%).Print("Initial Slope/Rise: "+Str$(meanSlopeRise)+" "+YUnit$+"/"+XUnit$+"\n");
+View(protocol%).Print("Decay time: "+Str$(meanDecay)+" "+XUnit$+"\n");
+end;
+Func GetMeanApproved (arr[],IncludeValues%) 'get mean value of peakdata array, mode 0: include all values, mode 1: exclude values below 0, mode 2: exclude 0 values
+'---varialbe delcaration---
+var mean;
+var n%;
+var approvedpeaks%;
+'---function code---
+if ArrSum(approved%) = 0 then return 0 endif;   'prevent divide by zero
+docase
+case IncludeValues% = 2 then
+    for n%:=0 to len(arr[])-1 do
+        if approved%[n%] = 1 AND arr[n%] <> 0 then
+            mean+=arr[n%];
+            approvedpeaks%+=1;
+        endif    
+    next
+case IncludeValues% = 1 then
+    for n%:=0 to len(arr[])-1 do
+        if approved%[n%] = 1 AND arr[n%] > 0 then
+            mean+=arr[n%];
+            approvedpeaks%+=1;
+        endif    
+    next
+case IncludeValues% = 0 then
+    for n%:=0 to len(arr[])-1 do
+        if approved%[n%] = 1 then
+            mean+=arr[n%];
+            approvedpeaks%+=1;
+        endif    
+    next    
+endcase;
+mean:=mean/approvedpeaks%;
+return mean;
+end;
+Func GetNoise (channel%)    'Lets the user set two cursors (3 and 4) and returns the Maximum value difference in the trace between them
+CursorNew(XLow()+(XHigh()-Xlow())/5,3);
+CursorNew(XHigh()-(XHigh()-Xlow())/5,4);
+CursorLabel(4,3,"left");
+CursorLabel(4,4,"right");
+var noise;
+Interact("Set Cursors to include only noise",7);
+noise:=ChanMeasure(channel%,8,Cursor(3),Cursor(4))-ChanMeasure(channel%,9,Cursor(3),Cursor(4));
+noiseSD:=ChanMeasure(channel%,12,Cursor(3),Cursor(4));
+NoiseMarkerStart:=Cursor(3);
+NoiseMarkerStop:=Cursor(4);
+CursorDelete(3);
+CursorDelete(4);
+return noise;
+end;
+Proc AddMarker(markchan%,peaks[])
+'--variable declaration--
+var n%; 'counter
+'--function code--
+for n%:=0 to len(peaks)-1 do
+    MemSetItem(markchan%,0,peaks[n%],0,Str$(n%+1));   'mark peak
+next;
+return;
+end;
+Proc InitDataArrays (source[],appr%[],auto%[],left[],right[],ampl[],hw[],slope[],decay[])   'Initialises data arrays and sets all events to approved
+var n%;
+resize appr%[len(source)];
+resize auto%[len(source)];
+for n%:=0 to len(appr%)-1 do
+    if Mode% = 0 then
+        appr%[n%]:=1;
+    else
+        appr%[n%]:=1;
+    endif;    
+    auto%[n%]:=0;
+next;
+'resize left[len(source)];
+'resize right[len(source)];
+resize ampl[len(source)];
+resize hw[len(source)];
+resize slope[len(source)];
+resize decay[len(source)];
+end;
+Proc GetPeakAmplitudeHW (channel%,event%)   'calculate peak half maximum width
+'--variable declaration--
+var amp:=amplitudes[event%];    'get peak amplitude 
+var HWamp;
+var HWleft;
+var HWright;
+'--function code--
+if peakdirection% = 1 then
+    HWamp:=ChanValue(channel%,peaks[event%])+amp*0.5;   'negative peak
+else
+    HWamp:=ChanValue(channel%,peaks[event%])-amp*0.5;   'positive peak
+endif;
+HWleft:=ChanSearch(channel%,7,peaks[event%],peaksLeft[event%],HWamp);   'find half maximum point in rise
+HWright:=ChanSearch(channel%,7,peaks[event%],peaksRight[event%],HWamp); 'find half maximum point in decay
+if HWleft > 0 AND HWright > 0 then
+    peakhalfwidth[event%]:=(HWright-HWleft);
+else
+    peakhalfwidth[event%]:=-1;
+endif;
+end;
+Proc GetPeakAmplitude(smoothed%,event%) 'calculate peak amplitude
+'--variable declaration--
+var baseline:=ChanValue(smoothed%,peaksLeft[event%]); 'get beaseline as value at peak onset
+'--function code--
+amplitudes[event%]:=abs(ChanValue(smoothed%,peaks[event%])-baseline);
+end;
+Proc GetSlopeRise (channel%,event%,from,upto)   'calculate initial slope
+'--variable declaration-
+var amp:=amplitudes[event%];    'get amplitude
+var startvalue; 'startvalue for measurement of slope
+var stopvalue;  'stopvalue for measurement of slope
+var high;   'point where curve reaches startvalue
+var low;    'point where curve reaches stopvalue
+'--function code--
+if peakdirection% = 1 then
+    startvalue:=ChanValue(channel%,peaksLeft[event%])-(amp*(from/100));
+    stopvalue:=ChanValue(channel%,peaksLeft[event%])-(amp*(upto/100));
+else
+    startvalue:=ChanValue(channel%,peaksLeft[event%])+(amp*(from/100));
+    stopvalue:=ChanValue(channel%,peaksLeft[event%])+(amp*(upto/100));
+endif;
+high:=ChanSearch(channel%,6,peaksLeft[event%],peaks[event%],startvalue);
+if high >= 0 then
+    low:=ChanSearch(channel%,6,high,peaks[event%],stopvalue);
+    slopes[event%]:=ChanMeasure(channel%,3,high,low);
+'    MovetoEvent(event%);
+'    var dc%:=CursorNew(high);
+'    var dc2%:=CursorNew(low);
+'    Message("bug");
+'    CursorDelete(dc%);
+'    CursorDelete(dc2%);
+else
+    slopes[event%]:=0;
+endif;
+return;
+end;
+Proc GetDecay (channel%,event%,upto)    'calculate peak decay time
+'--variable declaration-
+var stopvalue;  'store value at which peak is decayed to upto% baseline
+var endpoint;   'store point at which value is upto% decay
+'--function code--
+if peakdirection% = 1 then
+    stopvalue:=ChanValue(channel%,peaksright[event%])-(abs(ChanValue(channel%,peaks[event%])-ChanValue(channel%,peaksRight[event%]))*(upto/100));
+else
+    stopvalue:=ChanValue(channel%,peaksright[event%])+(abs(ChanValue(channel%,peaks[event%])-ChanValue(channel%,peaksRight[event%]))*(upto/100));
+endif;
+endpoint:=ChanSearch(channel%,6,peaks[event%],peaksRight[event%],stopvalue);
+'var d:=ChanValue(smooth%,peaks[event%]);
+'var d2:=(ChanValue(channel%,peaks[event%])-ChanValue(channel%,peaksRight[event%]));
+'MovetoEvent(event%);
+'Cursor(1,endpoint);
+decay[event%]:=endpoint-peaks[event%];
+end;
+Proc GetPeakData (events[],left[],right[])
+var n%;
+for n%:=0 to len(events)-1 do
+    GetPeakAmplitude(smooth%,n%);   'calculate amplitude    
+    GetPeakAmplitudeHW(smooth%,n%); 'calculate half maximum width of peak
+    GetSlopeRise(smooth%,n%,SlopeRiseFrom,SlopeRiseTo); 'calculate inital slope of peak
+    GetDecay(smooth%,n%,decaylimit);    'calculate peak decay time
+next;
+end;
+Proc AddSingleEvent (time)
+'---add1 to all the data arrays
+resize peaks[len(peaks)+1];
+resize approved%[len(peaks)];
+resize autoreject%[len(peaks)];
+resize peaksLeft[len(peaks)];
+resize peaksRight[len(peaks)];
+resize amplitudes[len(peaks)];
+resize peakhalfwidth[len(peaks)];
+resize slopes[len(peaks)];
+resize decay[len(peaks)];
+'---add new event
+peaks[len(peaks)-1]:=time;
+MemSetItem(marker%,0,peaks[len(peaks)-1],0,Str$(len(peaks)));
+'---calculate event data
+FindPeakOnOffset(slope%,peaks[len(peaks)-1],peaksLeft[len(peaks)-1],peaksRight[len(peaks)-1],searchrange);
+GetPeakAmplitude(smooth%,len(peaks)-1);   'calculate amplitude
+GetPeakAmplitudeHW(smooth%,len(peaks)-1);
+GetSlopeRise(smooth%,len(peaks)-1,SlopeRiseFrom,SlopeRiseTo);
+GetDecay(smooth%,len(peaks)-1,decaylimit);
+end;
+Proc DeleteSingleEvent (time)   'Deletes Event at Time form Data arrays
+MemDeleteTime(marker%,0,time);
+var event%:=GetIndex(time);
+ArrDeleteSingle(decay,event%);
+ArrDeleteSingle(slopes,event%);
+ArrDeleteSingle(peakhalfwidth,event%);
+ArrDeleteSingle(peaksRight,event%);
+ArrDeleteSingle(peaksLeft,event%);
+ArrDeleteSingle(amplitudes,event%);
+ArrDeleteSingleInt(autoreject%,event%);
+ArrDeleteSingleInt(approved%,event%);
+ArrDeleteSingle(peaks,event%);
+end;
+Func GetIndex (time)
+var index%;
+var n%;
+for n%:=0 to len(peaks)-1 do
+    if peaks[n%] = time then
+        return n%;
+    endif;    
+next;
+return index%;
+end;
+Func WriteConfigArr (ConfigArr[])
+'---variable declaration---
+resize ConfigArr[37];
+'---function code---
+ConfigArr[0]:=ch%;
+ConfigArr[1]:=peakdirection%;
+ConfigArr[2]:=smoothingrange;
+ConfigArr[3]:=searchrange;
+ConfigArr[4]:=thresholdSD;
+ConfigArr[5]:=avginterval;
+ConfigArr[6]:=MinPeakDistance;
+ConfigArr[7]:=HWMinMax[0];
+ConfigArr[8]:=HWMinMax[1];
+ConfigArr[9]:=AmpMinMax[0];
+ConfigArr[10]:=AmpMinMax[1];
+ConfigArr[11]:=SlopeMinMax[0];
+ConfigArr[12]:=SlopeMinMax[1];
+ConfigArr[13]:=ManualCursorSnap;
+ConfigArr[14]:=thresholdCursorSD;
+ConfigArr[15]:=SlopeRiseTo;
+ConfigArr[16]:=SlopeRiseFrom;
+ConfigArr[17]:=decaylimit;
+ConfigArr[18]:=Mt;
+ConfigArr[19]:=SlopeDetect[0];
+ConfigArr[20]:=SlopeDetect[1];
+ConfigArr[21]:=Mode%;
+ConfigArr[22]:=PeakDetectionModule%;
+ConfigArr[23]:=acNoiseDetect%;
+ConfigArr[24]:=acPeakCount%;
+ConfigArr[25]:=acNoiseTolerance;
+if filterHighpassStatus$ = "ON" then
+    ConfigArr[26]:=1;
+else
+    ConfigArr[26]:=0;
+endif;
+ConfigArr[27]:=filterHighpassFreq;
+ConfigArr[28]:=filterHighpassTransition;
+ConfigArr[29]:=filterHighpassAttenuation;
+if filterLowpassStatus$ = "ON" then
+    ConfigArr[30]:=1;
+else
+    ConfigArr[30]:=0;
+endif;
+ConfigArr[31]:=filterLowpassFreq;
+ConfigArr[32]:=filterLowpassTransition;
+ConfigArr[33]:=filterLowpassAttenuation;
+ConfigArr[34]:=sloperange;
+if smoothingStatus$ = "ON" then
+    ConfigArr[35]:=1;
+else
+    ConfigArr[35]:=0;
+endif;
+ConfigArr[36]:=keepprocessed%;
+return;
+end;
+Func ReadConfigArr (ConfigArr[])
+'---variable declaration---
+
+'---function code---
+ch%:=ConfigArr[0];
+peakdirection%:=ConfigArr[1];
+smoothingrange:=ConfigArr[2];
+searchrange:=ConfigArr[3];
+thresholdSD:=ConfigArr[4];
+avginterval:=ConfigArr[5];
+MinPeakDistance:=ConfigArr[6];
+HWMinMax[0]:=ConfigArr[7];
+HWMinMax[1]:=ConfigArr[8];
+AmpMinMax[0]:=ConfigArr[9];
+AmpMinMax[1]:=ConfigArr[10];
+SlopeMinMax[0]:=ConfigArr[11];
+SlopeMinMax[1]:=ConfigArr[12];
+ManualCursorSnap:=ConfigArr[13];
+thresholdCursorSD:=ConfigArr[14];
+SlopeRiseTo:=ConfigArr[15];
+SlopeRiseFrom:=ConfigArr[16];
+decaylimit:=ConfigArr[17];
+Mt:=ConfigArr[18];
+SlopeDetect[0]:=ConfigArr[19];
+SlopeDetect[1]:=ConfigArr[20];
+Mode%:=ConfigArr[21];
+PeakDetectionModule%:=ConfigArr[22];
+acNoiseDetect%:=ConfigArr[23];
+acPeakCount%:=ConfigArr[24];
+acNoiseTolerance:=ConfigArr[25];
+if ConfigArr[26] = 1 then
+    filterHighpassStatus$:="ON";
+else
+    filterHighpassStatus$:="OFF";
+endif;
+filterHighpassFreq:=ConfigArr[27];
+filterHighpassTransition:=ConfigArr[28];
+filterHighpassAttenuation:=ConfigArr[29];
+if ConfigArr[30] = 1 then
+    filterLowpassStatus$:="ON";
+else
+    filterLowpassStatus$:="OFF";
+endif;
+filterLowpassFreq:=ConfigArr[31];
+filterLowpassTransition:=ConfigArr[32];
+filterLowpassAttenuation:=ConfigArr[33];
+sloperange:=ConfigArr[34];
+if ConfigArr[35] = 1 then
+    smoothingStatus$:="ON";
+else
+    smoothingStatus$:="OFF";
+endif;
+keepprocessed%:=ConfigArr[36];
+return;
+end;
