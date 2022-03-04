@@ -1,0 +1,399 @@
+'libPeakDetect is a library of functions for peak detection
+'This script was written by Heiko Endle at Universitätsmedizin Mainz
+'----------------------------------------
+'Changelog
+'----------------------------------------
+'0.5b:  Inital Beta
+'0.51b: - Fixed on/offset is peak+-searchrange is out of range
+'0.55b: - Based Threshold calculation for progressive maximum on standard deviation of the noise in a defined time range containing no signals
+'0.6b:  - Implemented new peakfinding algorithm based on slope
+'       - fixed error failing to finding on/offset of peaks that was outside of recorded time
+'0.7b:  - Added high and lowpassfilters to ProcessRawData
+'----------------------------------------
+'Global Variables Delcarations
+'----------------------------------------
+var libPeakDetectVersion$:="0.7b"; 'Script Version
+'var ch%;       'debug
+'var smooth%;   'debug
+'var slope%;    'debug
+'var DCremove%; 'debug
+''----------------------------------------
+'Main Test Function
+'----------------------------------------
+'var peaks[0];   'stores times of automatically detected peaks debug
+'var peaksonset[0];  'debug
+'var peaksoffset[0]; 'debug
+'var file%:=View(); 'debug
+'CursorNew(1);   'debug
+'CursorLabel(4,1,"Current peak");    'debug
+'CursorNew(2);   'debug
+'CursorLabel(4,2,"search start");    'debug
+'CursorNew(3);   'debug
+'CursorLabel(4,3,"search stop");    'debug
+'CursorNew(4);   'debug
+'CursorLabel(4,4,"Threshold start");    'debug
+'CursorNew(5);   'debug
+'CursorLabel(4,5,"Threshold stop");    'debug
+'
+'DlgCreate("Select Channel");   'debug
+'DlgChan(1,"Channel to analyze",1); 'debug
+'DlgShow(ch%);
+'
+'var ChanSD:=ChanMeasure(ch%,12,0,MaxTime());    'debug
+'ProcessRawData(ch%,0.005,smooth%,slope%);  'debug
+'var SmoothSD:=ChanMeasure(smooth%,12,0,MaxTime());    'debug
+'findPeaksNegative(ch%,file%,peaks,0.5,3,0.50); 'debug
+'findPeaksNegativePA(ch%,smooth%,slope%,file%,peaks,peaksonset,peaksoffset,3,5,0.5,0.001);   'debug
+'---------------------------------------
+'Functions
+'----------------------------------------
+Proc ProcessRawData (ch%,highpass$,highpassfreq,highpasstransition,highpassattenuation,lowpass$,lowpassfreq,lowpasstransition,lowpassattenuation,sloperange,smoothstatus$,smoothrange,&smooth%,&slope%)
+'--variable declaration--
+var filtercoefficients[2047];
+var memoryChan%;
+var coefficients%;
+var samplingRate:=1/BinSize(ch%);    'get sample rate from channel
+var filter%:=0;
+'--function code--
+if highpass$ = "ON" and lowpass$ = "ON" then    'if high and lowpassfilter are on set bandpass filter
+    var meanattenuation:=((highpassattenuation+lowpassattenuation)/2);
+    var filterFreq:=(((lowpassfreq-highpassfreq)/2)+highpassfreq)/samplingRate;
+    var filterWidth:=((lowpassfreq-highpassfreq)/2)/samplingRate;
+    coefficients%:=FIRQuick(filtercoefficients,2,filterFreq,filterWidth,meanattenuation);
+    filter%:=1;
+else
+    if highpass$ = "ON" then    'get highpassfilter coefficients
+        coefficients%:=FIRQuick(filtercoefficients,1,highpassfreq/samplingRate,highpasstransition/samplingRate,highpassattenuation);
+        filter%:=1;
+    endif;
+    if lowpass$ = "ON" then     'get lowpassfilter coefficients
+        coefficients%:=FIRQuick(filtercoefficients,0,lowpassfreq/samplingRate,lowpasstransition/samplingRate,lowpassattenuation);
+        filter%:=1;
+    endif;
+endif;
+
+if filter% = 1 then
+    resize filtercoefficients[coefficients%];
+    memoryChan%:=FiltApply(filtercoefficients,0,ch%,0,MaxTime(ch%));
+    smooth%:=ChanSave(memoryChan%,0);
+    ChanDelete(memoryChan%);
+endif;
+
+if smoothstatus$ = "ON" then
+    if filter% = 1 then
+        ChanProcessAdd(smooth%,1,smoothrange);
+    else        
+        smooth%:=ChanDuplicate(ch%);
+        ChanProcessAdd(smooth%,1,smoothrange); 
+    endif;    
+endif;
+
+if filter% = 0 AND smoothstatus$ <> "ON" then
+    smooth%:=ChanDuplicate(ch%);
+endif;
+
+ChanTitle$(smooth%,"smoothed"); 'apply title to processed channel
+ChanShow(smooth%);  'show processed channel
+Optimise(smooth%);
+
+slope%:=ChanDuplicate(smooth%);
+if smoothstatus$ = "ON" then
+    ChanProcessAdd(slope%,1,smoothrange);
+endif;
+ChanProcessAdd(slope%,3,sloperange);
+ChanTitle$(slope%,"1st derivative");
+ChanShow(slope%);
+return;
+end;
+Proc findPeaksNegative (ch%,data%,arr[],Meanbouts,thresholdSD,MaxTimeCrossThreshold); 'peakfinding routine for negative peaks
+'--variable declaration--
+var smooth%;
+var slope%;
+var SD;
+var Start:=0;
+var Thresholdcrossing:=0;
+var Secondcrossing;
+var count%:=0;
+var BoutStart;  'saves the beginning time of the current bout
+var BoutStop:=0;   'saves the ending time of the current bout
+var mean;   'saves mean of the current bout
+var CurrentThreshold;   'saves currently applied threshold
+
+'--function code--
+smooth%:=ChanDuplicate(ch%);
+ChanProcessAdd(smooth%,1,0.005);
+ChanTitle$(smooth%,"smoothed");
+ChanShow(smooth%);
+slope%:=ChanDuplicate(ch%);
+ChanProcessAdd(slope%,1,0.005);
+ChanProcessAdd(slope%,3,0.005);
+ChanTitle$(slope%,"1st derivative");
+ChanShow(slope%);
+SD:=ChanMeasure(smooth%,12,0,MaxTime());
+'--debug--
+CursorNew(0,1);
+'--classic thresholding approach---
+while BoutStop < Maxtime() do
+    BoutStart:=BoutStop;
+    BoutStop+=MeanBouts;
+    mean:=ChanMeasure(smooth%,2,BoutStart,BoutStop);
+    CurrentThreshold:=  mean - SD*thresholdSD; 'set the threshold depending on the current mean value of the bout
+    Thresholdcrossing:=0;   'reset
+    Start:=BoutStart;
+    while Thresholdcrossing >= 0 and Start < BoutStop do
+        Thresholdcrossing:=ChanSearch(smooth%,8,Start,BoutStop,CurrentThreshold); 'find crossing of threshold
+        'Cursor(1,Thresholdcrossing);    'debug
+        'MoveWindowTo(Thresholdcrossing-0.01); 'debug
+        if Thresholdcrossing > 0 then   'if crossing is detected
+            Secondcrossing:=ChanSearch(smooth%,7,Thresholdcrossing,Thresholdcrossing+5,CurrentThreshold); 'find the second crossing  (in then decay of the peak)
+            'Cursor(1,Secondcrossing); 'debug
+            if Secondcrossing >= 0 then
+                Start:=ChanSearch(smooth%,2,Thresholdcrossing,Secondcrossing); 'find minimum between two crossings (this is the peak)
+                resize arr[len(arr[])+1];
+                arr[count%]:=Start;
+                count%+=1;
+                Start:=Secondcrossing;
+            else
+                Start:=Thresholdcrossing+MaxTimeCrossThreshold;
+            endif;
+        else
+            Start:=Thresholdcrossing+0.001; 'shift by 1ms to prevent detecting same peak again
+        endif;        
+    wend;
+wend;
+return;
+end;
+Proc findPeaksNegativePA (ch%,smooth%,slope%,data%,peaksarr[],peaksonset[],peaksoffset[],thresholdSD,NoiseStart,NoiseStop,meanrange,searchrange,minpeakdistance); 'peakfinding routine for negative peaks using progressiv maximum
+View(data%);
+'--variable declaration--
+var rn:=0.5;    'stores the possible maximum number of elements found each step
+var n%; 'counter
+var stop%:=-1;
+var peaksfound[3];  'array to store peak locations
+peaksfound[0]:=0;
+peaksfound[1]:=MaxTime();
+var peaksleft[3];   'array storing the onset point of peaks
+peaksleft[0]:=0;
+var peaksright[3];  'array storing the end of decay of peaks
+peaksright[1]:=MaxTime();
+var onoff[2];
+var maximum;    'stores current peak location
+var mean;       'stores current mean
+var SD:=ChanMeasure(smooth%,12,NoiseStart,NoiseStop);         'stores current standard deviation
+var maximumv;   'debug current peak value
+var thresh;     'debug current threshold
+var searchstart;     'debug startpoint of current peak search
+var searchstop;      'debug endpoint of current peak search
+var DCremoveslope;   'debug
+'--function code--
+peaksright[0]:=ChanSearch(slope%,8,0,0+searchrange,0);
+peaksleft[1]:=ChanSearch(slope%,7,MaxTime(),MaxTime()-searchrange,0);
+'--progessive maximum approach--
+while stop%<(len(peaksfound)-1)/2 do
+'    resize peaksfound[len(peaksfound)+rn*2];   
+'    resize peaksleft[len(peaksleft)+rn*2];     
+'    resize peaksright[len(peaksright)+rn*2];   
+'    rn*=2;
+    n%:=0;
+    stop%:=0;
+    while n%<len(peaksfound)-2 do   'loop through array find maxima between alle previously found maxima
+        if peaksright[len(peaksright)-1] <> 0 then
+            resize peaksfound[len(peaksfound)*2];
+            resize peaksleft[len(peaksleft)*2];
+            resize peaksright[len(peaksright)*2];    
+        endif
+        if peaksfound[n%+1] > 0 then
+            maximum:=ChanSearch(smooth%,2,peaksright[n%],peaksleft[n%+1]); 'Find maximum value located between two elements of the List
+            mean:=ChanMeasure(smooth%,2,maximum-meanrange,maximum+meanrange);
+            'SD:=ChanMeasure(smooth%,12,maximum-meanrange,maximum+meanrange);
+'            DCremoveslope:=ChanMeasure(DCremove%,12,maximum-meanrange,maximum+meanrange);   'debug
+'            Cursor(1,maximum); 'debug
+'            Cursor(4,maximum-meanrange);    'debug
+'            Cursor(5,maximum+meanrange);    'debug
+'            MoveWindowTo(maximum-0.1); 'debug
+'            searchstart:=peaksright[n%];  'debug
+'            Cursor(2,searchstart);  'debug
+'            searchstop:=peaksleft[n%+1];   'debug
+'            Cursor(3,searchstop);   'debug
+'            maximumv:=ChanValue(smooth%,maximum); 'debug
+'            thresh:=(mean-thresholdSD*SD); 'debug
+            if ChanValue(smooth%,maximum)<(mean-thresholdSD*SD) AND (peaksleft[n%+1]-peaksright[n%]) > minpeakdistance then 'if peak is above threshold and peaks are at least minpeakdistance away from each other
+               ArrInsert(maximum,peaksfound,n%+1); 'add peak to List
+               FindPeakOnOffset(slope%,maximum,onoff[0],onoff[1],searchrange);
+               ArrInsert(onoff[0],peaksleft,n%+1);
+               ArrInsert(onoff[1],peaksright,n%+1);
+               n%+=1;
+            else
+                ArrInsert(-1,peaksfound,n%+1);
+                ArrInsert(-1,peaksleft,n%+1);
+                ArrInsert(-1,peaksright,n%+1);
+                n%+=1;
+            endif;
+        else
+            n%+=1;
+            stop%+=1;
+        endif;
+        n%+=1;
+    wend;
+wend
+ClearDetectionArray(peaksfound);
+ClearDetectionArray(peaksleft);
+ClearDetectionArray(peaksright);
+resize peaksarr[len(peaksfound)];
+resize peaksonset[len(peaksleft)];
+resize peaksoffset[len(peaksright)];
+ArrConst(peaksarr[],peaksfound[]);
+ArrConst(peaksonset[],peaksleft[]);
+ArrConst(peaksoffset[],peaksright[]);
+return;
+end;
+Proc findPeaksNegativeSlope(data%,ch%,slope%,peaksarr[],peaksonset[],peaksoffset[],searchrange,slope,timecrossed)    'peakfinding routine for negative peaks using slope
+View(data%);
+'---variable declaration---
+var n%:=0;          'counter
+var startsearch:=0;    'starttime for the current seach
+var stopsearch:=MaxTime(slope%);     'stoptime for the current search
+var peak:=1;           'current peak location
+var peaksfound[5];  'stores found peaks
+var peaksleft[5];   'array storing the onset point of peaks
+var peaksright[5];  'array storing the end of decay of peaks
+var onoff[2];       'stores on/offset of current peak
+'---function code---
+while startsearch < stopsearch do  
+    if peaksfound[len(peaksfound)-1] <> 0 then  'if the arrays are full double their size
+        resize peaksfound[len(peaksfound)*2];
+        resize peaksleft[len(peaksleft)*2];
+        resize peaksright[len(peaksright)*2];    
+    endif
+    peak:=ChanSearch(slope%,7,startsearch,stopsearch,0,slope,timecrossed); 'find peak at zero point in first derivative
+    if peak >= 0 then   'if the search was sucessfull
+        peaksfound[n%]:=peak;   'add indentified peak to array
+        FindPeakOnOffset(slope%,peak,onoff[0],onoff[1],searchrange);
+        peaksleft[n%]:=onoff[0];
+        peaksright[n%]:=onoff[1];
+        startsearch:=peak;
+        n%+=1;
+    else
+        break;
+    endif
+wend;
+'---write peak data to output variable---
+ArrSubX(peaksfound,0)
+ArrSubX(peaksleft,0)
+ArrSubX(peaksright,0)
+resize peaksarr[len(peaksfound)];
+resize peaksonset[len(peaksleft)];
+resize peaksoffset[len(peaksright)];
+ArrConst(peaksarr[],peaksfound[]);
+ArrConst(peaksonset[],peaksleft[]);
+ArrConst(peaksoffset[],peaksright[]);
+return;
+end;
+Proc FindPeakOnOffset(slopech%,peak,&onset,&offset,range)  'find on- and offset of a peak
+'--variable declaration--
+
+
+'--function code--
+If (peak-range) <0 then
+    onset:=ChanSearch(slopech%,7,peak,0,0);   'find onset if peak is close to beginning of trace
+    if onset < 0 then   'if search fails (because onset is before start of the recording) set onset to 0
+        onset:=0;
+    endif;            
+else    
+    onset:=ChanSearch(slopech%,7,peak,peak-range,0);   'find onset
+endif;
+
+If (peak+range) > MaxTime(slopech%) then
+    offset:=ChanSearch(slopech%,8,peak,MaxTime(slopech%),0);   'find offset if peak is close to end of the trace
+    if offset < 0 then
+        offset:= MaxTime(slopech%);     'if search fails (because offset is after end of the recording) set onset to MaxTime
+    endif;    
+else    
+    offset:=ChanSearch(slopech%,8,peak,peak+range,0);   'find offset
+endif;
+return;
+end;
+Proc ClearDetectionArray (arr[])    'removes all elements with value -1 from an array and removes all elements with value 0 from the end of that array. Then removes the first and last entry from the array.
+'--variable declaration--
+var n%; 'counter variable
+var switched%:=1; 'flag, 1 if elements were switched
+'--function code--
+while switched% = 1 do  'put all elements with value -1 to the end of the array
+    switched%:=0;
+    for n%:=0 to len(arr)-2 do
+        if arr[n%] = -1 AND arr[n%+1] <> -1 then
+            arr[n%]:=arr[n%+1];
+            arr[n%+1]:=-1;
+            switched%:=1
+        endif        
+    next    
+wend
+ArrSubX(arr,-1);    'clear all elements with value -1 at end
+ArrSubX(arr,0);     'clear all elements with value 0 at end
+ArrDeleteSingle(arr,0);
+ArrDeleteSingle(arr,len(arr)-1);
+return;
+end;
+Proc ArrInsert(value,arr[],index%)  'insert a value into an array at a given index. Deletes the last value of the array.
+'--variable declaration--
+var n%:=len(arr)-1;   'counter
+'--function code--
+while n%>index% do 
+    arr[n%]:=arr[n%-1];
+    n%-=1;
+wend;
+arr[index%]:=value;
+return;
+end;
+func ArrSubX(x[],value);    'remove all elements with value from the end of an array
+var n%:=len(x);
+while n% > 0 do
+    if x[n%-1] = value then
+        n%:=n%-1;
+    else break;
+    endif;
+wend;
+resize x[n%];    
+return;
+end;
+
+func ArrClear(x[]);         'set all values of an array to 0
+var n%:=0;
+while n% <> len(x) do
+    x[n%]:=0;
+    n%:=n%+1;
+wend;   
+return;
+end;
+Proc ArrDeleteSingle (arr[],index%)
+var n%;
+for n%:=index%+1 to len(arr)-1 do
+    arr[n%-1]:=arr[n%];
+next;
+resize arr[len(arr)-1];
+end;
+Proc ArrDeleteSingleInt (arr%[],index%)
+var n%;
+for n%:=index%+1 to len(arr%)-1 do
+    arr%[n%-1]:=arr%[n%];
+next;
+resize arr%[len(arr%)-1];
+end;
+Func ArrNumberOfValuesInt% (arr%[],value)
+'--variable declaration--
+var n%; 'counter
+var numberofvalue%:=0;
+'--function code--
+for n%:=0 to len(arr%)-1 do
+    if arr%[n%] = value then
+        numberofvalue%+=1;
+    endif    
+next
+return numberofvalue%;
+end;
+'Proc MoveWindowTo (where)   'for debug, copy from MiniMonster Main
+'If where >=0 then
+'    XRange(where,where+(XHigh()-Xlow()));
+'    Draw();
+'endif;
+'end;

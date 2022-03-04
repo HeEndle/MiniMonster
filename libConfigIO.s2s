@@ -1,0 +1,538 @@
+'libConfigIO is a library of functions for reading and writing to an external config file
+'This script was written by Heiko Endle at Universitätsmedizin Mainz
+'----------------------------------------
+'Changelog
+'----------------------------------------
+'0.5b:  Inital Beta
+'0.6b:  Added Variables for MiniMonster Ver 1.4b
+'0.7b:  Added Variables for MiniMonster Ver 1.52b
+'0.8b:  Added Variables for MiniMonster Ver 1.6b
+'0.85b: Added Variables for MiniMonster Ver 1.62b
+'0.9b:  Changes for MiniMonster Ver 1.7b
+'----------------------------------------
+'Global Variables Delcarations
+'----------------------------------------
+var libConfigIOVersion$:="0.85b"; 'Script Version
+'var dummy[18];
+'dummy[0]:=1;
+'dummy[1]:=1;
+'dummy[2]:=1;
+'dummy[3]:=1;
+'dummy[4]:=1;
+'
+'----------------------------------------
+'Main Test Function
+'----------------------------------------
+
+'ReadConfig%(dummy);
+'WriteConfig% (dummy);
+
+'----------------------------------------
+'Functions
+'----------------------------------------
+
+Func ReadConfig% (ConfigArr[],handle%:=0)
+'---variable  declaration---
+var oldview%:=View();
+var config%;
+var setting$;   'stores the read setting type
+var value;  'stores setting value
+var readcode%;  'stores the code from the read
+'---function code---
+resize ConfigArr[37];
+
+if handle%=0 then
+    FilePathSet(View(App(3)).FileName$(-1));
+    config%:=FileOpen("MiniMonsterConfig.txt",8);
+else
+    config%:=handle%
+endif;
+
+if config% > 0 then
+    View(config%);
+    ReadSetup(":","","","",":");
+    while 1=1 do
+        readcode%:=Read(setting$,value);
+        if readcode% < 0 then break endif;
+        docase
+        case setting$ = "Channel" then
+            ConfigArr[0]:=value;
+        case setting$ = "Peakdirection" then
+            ConfigArr[1]:=value;
+        case setting$ = "Smoothrange" then
+            ConfigArr[2]:=value;
+        case setting$ = "Searchrange" then
+            ConfigArr[3]:=value;
+        case setting$ = "ThresholdSD" then
+            ConfigArr[4]:=value;
+        case setting$ = "Meanrange" then
+            ConfigArr[5]:=value;
+        case setting$ = "Minimum time between peaks" then
+            ConfigArr[6]:=value;
+        case setting$ = "Min HW" then
+            ConfigArr[7]:=value;
+        case setting$ = "Max HW" then
+            ConfigArr[8]:=value;
+        case setting$ = "Min amp" then
+            ConfigArr[9]:=value;
+        case setting$ = "Max amp" then
+            ConfigArr[10]:=value;
+        case setting$ = "Min Slope" then
+            ConfigArr[11]:=value;
+        case setting$ = "Max Slope" then
+            ConfigArr[12]:=value;
+        case setting$ = "Cursor snaprange" then
+            ConfigArr[13]:=value;
+        case setting$ = "Cursor thresholdSD" then
+            ConfigArr[14]:=value;
+        case setting$ = "Slope from" then
+            ConfigArr[15]:=value;
+        case setting$ = "Slope to" then
+            ConfigArr[16]:=value;
+        case setting$ = "Decay to" then
+            ConfigArr[17]:=value;
+        case setting$ = "Mean frequency range" then
+            ConfigArr[18]:=value;
+        case setting$ = "Slope Threshold" then
+            ConfigArr[19]:=value;
+        case setting$ = "Minimum time past threshold" then
+            ConfigArr[20]:=value;
+        case setting$ = "Detection Mode" then
+            ConfigArr[21]:=value;            
+        case setting$ = "Automatic detection module" then
+            ConfigArr[22]:=value;     
+        case setting$ = "50Hz noise detection" then
+            ConfigArr[23]:=value;
+        case setting$ = "50Hz peak threshold" then
+            ConfigArr[24]:=value; 
+        case setting$ = "50Hz peak tolerance" then
+            ConfigArr[25]:=value;
+        case setting$ = "Highpass filter" then
+            ConfigArr[26]:=value;
+        case setting$ = "Highpass filter frequency" then
+            ConfigArr[27]:=value;
+        case setting$ = "Highpass filter transition gap" then
+            ConfigArr[28]:=value;
+        case setting$ = "Highpass filter attenuation" then
+            ConfigArr[29]:=value;
+        case setting$ = "Lowpass filter" then
+            ConfigArr[30]:=value;
+        case setting$ = "Lowpass filter frequency" then
+            ConfigArr[31]:=value;
+        case setting$ = "Lowpass filter transition gap" then
+            ConfigArr[32]:=value;
+        case setting$ = "Lowpass filter attenuation" then
+            ConfigArr[33]:=value;
+        case setting$ = "Slope range" then
+            ConfigArr[34]:=value;
+        case setting$ = "Trace smoothing" then
+            ConfigArr[35]:=value;
+        case setting$ = "Keep processed channels" then
+            ConfigArr[36]:=value;             
+        endcase;
+    wend
+    FileClose();
+endif;
+
+View(oldview%);
+return config%;
+end;
+Func WriteConfig%(ConfigArr[],handle%:=0)
+'---variable  declaration---
+var oldview%:=View();
+'var config%:=FileOpen("MiniMonsterConfig.txt",8);
+var config%;
+var searchcode%;
+'---function code---
+
+if handle%=0 then
+    FilePathSet(View(App(3)).FileName$(-1));
+    config%:=FileOpen("MiniMonsterConfig.txt",1);
+else
+    config%:=handle%
+endif;
+
+if config% < 0 then
+    config%:=FileNew(1);
+endif;
+View(config%);
+searchcode%:=EditFind("Channel:",2);
+if searchcode% = 1 then
+    MoveBy(0,1);
+    MoveBy(1,50,0);    
+    Print(Str$(ConfigArr[0]));
+else
+    MoveTo(0,0);
+    Print("Channel: "+Str$(ConfigArr[0])+"\n");
+endif;
+
+searchcode%:=EditFind("Peakdirection:",2);
+if searchcode% = 1 then
+    MoveBy(0,1);
+    MoveBy(1,50,0);    
+    Print(Str$(ConfigArr[1]));
+else
+    MoveTo(0,0);
+    Print("Peakdirection: "+Str$(ConfigArr[1])+"\n");
+endif;
+
+searchcode%:=EditFind("Smoothrange:",2);
+if searchcode% = 1 then
+    MoveBy(0,1);
+    MoveBy(1,50,0);    
+    Print(Str$(ConfigArr[2]));
+else
+    MoveTo(0,0);
+    Print("Smoothrange: "+Str$(ConfigArr[2])+"\n");
+endif;
+
+searchcode%:=EditFind("Searchrange:",2);
+if searchcode% = 1 then
+    MoveBy(0,1);
+    MoveBy(1,50,0);    
+    Print(Str$(ConfigArr[3]));
+else
+    MoveTo(0,0);
+    Print("Searchrange: "+Str$(ConfigArr[3])+"\n");
+endif;
+
+searchcode%:=EditFind("ThresholdSD:",2);
+if searchcode% = 1 then
+    MoveBy(0,1);
+    MoveBy(1,50,0);    
+    Print(Str$(ConfigArr[4]));
+else
+    MoveTo(0,0);
+    Print("ThresholdSD: "+Str$(ConfigArr[4])+"\n");
+endif;
+
+searchcode%:=EditFind("Meanrange:",2);
+if searchcode% = 1 then
+    MoveBy(0,1);
+    MoveBy(1,50,0);    
+    Print(Str$(ConfigArr[5]));
+else
+    MoveTo(0,0);
+    Print("Meanrange: "+Str$(ConfigArr[5])+"\n");
+endif;
+
+searchcode%:=EditFind("Minimum time between peaks:",2);
+if searchcode% = 1 then
+    MoveBy(0,1);
+    MoveBy(1,50,0);    
+    Print(Str$(ConfigArr[6]));
+else
+    MoveTo(0,0);
+    Print("Minimum time between peaks: "+Str$(ConfigArr[6])+"\n");
+endif;
+
+searchcode%:=EditFind("Min HW:",2);
+if searchcode% = 1 then
+    MoveBy(0,1);
+    MoveBy(1,50,0);    
+    Print(Str$(ConfigArr[7]));
+else
+    MoveTo(0,0);
+    Print("Min HW: "+Str$(ConfigArr[7])+"\n");
+endif;
+
+searchcode%:=EditFind("Max HW:",2);
+if searchcode% = 1 then
+    MoveBy(0,1);
+    MoveBy(1,50,0);    
+    Print(Str$(ConfigArr[8]));
+else
+    MoveTo(0,0);
+    Print("Max HW: "+Str$(ConfigArr[8])+"\n");
+endif;
+
+searchcode%:=EditFind("Min amp:",2);
+if searchcode% = 1 then
+    MoveBy(0,1);
+    MoveBy(1,50,0);    
+    Print(Str$(ConfigArr[9]));
+else
+    MoveTo(0,0);
+    Print("Min amp: "+Str$(ConfigArr[9])+"\n");
+endif;
+
+searchcode%:=EditFind("Max amp:",2);
+if searchcode% = 1 then
+    MoveBy(0,1);
+    MoveBy(1,50,0);    
+    Print(Str$(ConfigArr[10]));
+else
+    MoveTo(0,0);
+    Print("Max amp: "+Str$(ConfigArr[10])+"\n");
+endif;
+
+searchcode%:=EditFind("Min Slope:",2);
+if searchcode% = 1 then
+    MoveBy(0,1);
+    MoveBy(1,50,0);    
+    Print(Str$(ConfigArr[11]));
+else
+    MoveTo(0,0);
+    Print("Min Slope: "+Str$(ConfigArr[11])+"\n");
+endif;
+
+searchcode%:=EditFind("Max Slope:",2);
+if searchcode% = 1 then
+    MoveBy(0,1);
+    MoveBy(1,50,0);    
+    Print(Str$(ConfigArr[12]));
+else
+    MoveTo(0,0);
+    Print("Max Slope: "+Str$(ConfigArr[12])+"\n");
+endif;
+
+searchcode%:=EditFind("Cursor snaprange:",2);
+if searchcode% = 1 then
+    MoveBy(0,1);
+    MoveBy(1,50,0);    
+    Print(Str$(ConfigArr[13]));
+else
+    MoveTo(0,0);
+    Print("Cursor snaprange: "+Str$(ConfigArr[13])+"\n");
+endif;
+
+searchcode%:=EditFind("Cursor thresholdSD:",2);
+if searchcode% = 1 then
+    MoveBy(0,1);
+    MoveBy(1,50,0);    
+    Print(Str$(ConfigArr[14]));
+else
+    MoveTo(0,0);
+    Print("Cursor thresholdSD: "+Str$(ConfigArr[14])+"\n");
+endif;
+
+searchcode%:=EditFind("Slope from:",2);
+if searchcode% = 1 then
+    MoveBy(0,1);
+    MoveBy(1,50,0);    
+    Print(Str$(ConfigArr[15]));
+else
+    MoveTo(0,0);
+    Print("Slope from: "+Str$(ConfigArr[15])+"\n");
+endif;
+
+searchcode%:=EditFind("Slope to:",2);
+if searchcode% = 1 then
+    MoveBy(0,1);
+    MoveBy(1,50,0);    
+    Print(Str$(ConfigArr[16]));
+else
+    MoveTo(0,0);
+    Print("Slope to: "+Str$(ConfigArr[16])+"\n");
+endif;
+
+searchcode%:=EditFind("Decay to:",2);
+if searchcode% = 1 then
+    MoveBy(0,1);
+    MoveBy(1,50,0);    
+    Print(Str$(ConfigArr[17]));
+else
+    MoveTo(0,0);
+    Print("Decay to: "+Str$(ConfigArr[17])+"\n");
+endif;
+
+searchcode%:=EditFind("Mean frequency range:",2);
+if searchcode% = 1 then
+    MoveBy(0,1);
+    MoveBy(1,50,0);    
+    Print(Str$(ConfigArr[18]));
+else
+    MoveTo(0,0);
+    Print("Mean frequency range: "+Str$(ConfigArr[18])+"\n");
+endif;
+
+searchcode%:=EditFind("Slope Threshold:",2);
+if searchcode% = 1 then
+    MoveBy(0,1);
+    MoveBy(1,50,0);    
+    Print(Str$(ConfigArr[19]));
+else
+    MoveTo(0,0);
+    Print("Slope Threshold: "+Str$(ConfigArr[19])+"\n");
+endif;
+
+searchcode%:=EditFind("Minimum time past threshold:",2);
+if searchcode% = 1 then
+    MoveBy(0,1);
+    MoveBy(1,50,0);    
+    Print(Str$(ConfigArr[20]));
+else
+    MoveTo(0,0);
+    Print("Minimum time past threshold: "+Str$(ConfigArr[20])+"\n");
+endif;
+
+searchcode%:=EditFind("Detection Mode:",2);
+if searchcode% = 1 then
+    MoveBy(0,1);
+    MoveBy(1,50,0);    
+    Print(Str$(ConfigArr[21]));
+else
+    MoveTo(0,0);
+    Print("Detection Mode: "+Str$(ConfigArr[21])+"\n");
+endif;
+
+searchcode%:=EditFind("Automatic detection module:",2);
+if searchcode% = 1 then
+    MoveBy(0,1);
+    MoveBy(1,50,0);    
+    Print(Str$(ConfigArr[22]));
+else
+    MoveTo(0,0);
+    Print("Automatic detection module: "+Str$(ConfigArr[22])+"\n");
+endif;
+
+searchcode%:=EditFind("50Hz noise detection:",2);
+if searchcode% = 1 then
+    MoveBy(0,1);
+    MoveBy(1,50,0);    
+    Print(Str$(ConfigArr[23]));
+else
+    MoveTo(0,0);
+    Print("50Hz noise detection: "+Str$(ConfigArr[23])+"\n");
+endif;
+
+searchcode%:=EditFind("50Hz peak threshold:",2);
+if searchcode% = 1 then
+    MoveBy(0,1);
+    MoveBy(1,50,0);    
+    Print(Str$(ConfigArr[24]));
+else
+    MoveTo(0,0);
+    Print("50Hz peak threshold: "+Str$(ConfigArr[24])+"\n");
+endif;
+
+searchcode%:=EditFind("50Hz peak tolerance:",2);
+if searchcode% = 1 then
+    MoveBy(0,1);
+    MoveBy(1,50,0);    
+    Print(Str$(ConfigArr[25]));
+else
+    MoveTo(0,0);
+    Print("50Hz peak tolerance: "+Str$(ConfigArr[25])+"\n");
+endif;
+
+searchcode%:=EditFind("Highpass filter:",2);
+if searchcode% = 1 then
+    MoveBy(0,1);
+    MoveBy(1,50,0);    
+    Print(Str$(ConfigArr[26]));
+else
+    MoveTo(0,0);
+    Print("Highpass filter: "+Str$(ConfigArr[26])+"\n");
+endif;
+
+searchcode%:=EditFind("Highpass filter frequency:",2);
+if searchcode% = 1 then
+    MoveBy(0,1);
+    MoveBy(1,50,0);    
+    Print(Str$(ConfigArr[27]));
+else
+    MoveTo(0,0);
+    Print("Highpass filter frequency: "+Str$(ConfigArr[27])+"\n");
+endif;
+
+searchcode%:=EditFind("Highpass filter transition gap:",2);
+if searchcode% = 1 then
+    MoveBy(0,1);
+    MoveBy(1,50,0);    
+    Print(Str$(ConfigArr[28]));
+else
+    MoveTo(0,0);
+    Print("Highpass filter transition gap: "+Str$(ConfigArr[28])+"\n");
+endif;
+
+searchcode%:=EditFind("Highpass filter attenuation:",2);
+if searchcode% = 1 then
+    MoveBy(0,1);
+    MoveBy(1,50,0);    
+    Print(Str$(ConfigArr[29]));
+else
+    MoveTo(0,0);
+    Print("Highpass filter attenuation: "+Str$(ConfigArr[29])+"\n");
+endif;
+
+searchcode%:=EditFind("Lowpass filter:",2);
+if searchcode% = 1 then
+    MoveBy(0,1);
+    MoveBy(1,50,0);    
+    Print(Str$(ConfigArr[30]));
+else
+    MoveTo(0,0);
+    Print("Lowpass filter: "+Str$(ConfigArr[30])+"\n");
+endif;
+
+searchcode%:=EditFind("Lowpass filter frequency:",2);
+if searchcode% = 1 then
+    MoveBy(0,1);
+    MoveBy(1,50,0);    
+    Print(Str$(ConfigArr[31]));
+else
+    MoveTo(0,0);
+    Print("Lowpass filter frequency: "+Str$(ConfigArr[31])+"\n");
+endif;
+
+searchcode%:=EditFind("Lowpass filter transition gap:",2);
+if searchcode% = 1 then
+    MoveBy(0,1);
+    MoveBy(1,50,0);    
+    Print(Str$(ConfigArr[32]));
+else
+    MoveTo(0,0);
+    Print("Lowpass filter transition gap: "+Str$(ConfigArr[32])+"\n");
+endif;
+
+searchcode%:=EditFind("Lowpass filter attenuation:",2);
+if searchcode% = 1 then
+    MoveBy(0,1);
+    MoveBy(1,50,0);    
+    Print(Str$(ConfigArr[33]));
+else
+    MoveTo(0,0);
+    Print("Lowpass filter attenuation: "+Str$(ConfigArr[33])+"\n");
+endif;
+
+searchcode%:=EditFind("Slope range:",2);
+if searchcode% = 1 then
+    MoveBy(0,1);
+    MoveBy(1,50,0);    
+    Print(Str$(ConfigArr[34]));
+else
+    MoveTo(0,0);
+    Print("Slope range: "+Str$(ConfigArr[34])+"\n");
+endif;
+
+searchcode%:=EditFind("Trace smoothing:",2);
+if searchcode% = 1 then
+    MoveBy(0,1);
+    MoveBy(1,50,0);    
+    Print(Str$(ConfigArr[35]));
+else
+    MoveTo(0,0);
+    Print("Trace smoothing: "+Str$(ConfigArr[35])+"\n");
+endif;
+
+searchcode%:=EditFind("Keep processed channels:",2);
+if searchcode% = 1 then
+    MoveBy(0,1);
+    MoveBy(1,50,0);    
+    Print(Str$(ConfigArr[36]));
+else
+    MoveTo(0,0);
+    Print("Keep processed channels: "+Str$(ConfigArr[36])+"\n");
+endif;
+
+if handle%=0 then
+    FileSaveAs("MiniMonsterConfig.txt",-1,1);
+else
+    FileSaveAs("");
+endif;
+
+FileClose();
+View(oldview%);
+return;
+end;
