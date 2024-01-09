@@ -42,12 +42,13 @@ Proc Versions()
 '1.62b   - Changed settings dialog to make future adjustments easier. Put spike rejection and spike parameters in their own dialog.
 '1.7b    - Changed Settings dialog and  added saving and loading of config files.
 '1.71b   - Fixed a bug that would cause negative frequencies when the processed channels were discarded.
-'        - Correctly disble maunual mode settings on initial settings dialog load.
-'        - Fixed inclued working correctly if Spikes is started from a folder different to the one containing the main script.
+'        - Correctly disable maunual mode settings on initial settings dialog load.
+'        - Fixed includes working correctly if Spikes is started from a folder different to the one containing the main script.
+'1.72b   - Only load channel number from config file if the channel exists as Waveform channel in current data file.
 end;
 '---------------------------Global Variable Declarations-----------------------------
 '------General Script Information------
-var Version$:="1.71b"; 'Script Version
+var Version$:="1.72b"; 'Script Version
 var quit%;  'flag if essential dialog has been cancelled by the user, causes script to halt at exit points
 var rerun%:=0; 'flag 1 if old peak data is loaded
 var configload%;    'flag if config was loaded
@@ -1473,7 +1474,9 @@ Func ReadConfigArr (ConfigArr[])
 '---variable declaration---
 
 '---function code---
-ch%:=ConfigArr[0];
+if ChanKind(ConfigArr[0]) = 1 then
+    ch%:=ConfigArr[0];
+endif;
 peakdirection%:=ConfigArr[1];
 smoothingrange:=ConfigArr[2];
 searchrange:=ConfigArr[3];
