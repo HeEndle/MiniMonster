@@ -26,4 +26,4 @@ Copy the scipt folder in any directory and open the **MiniMonster.s2s** file usi
 * 1.7b
   - Changed Settings dialog and  added saving and loading of config files.
 
-_For changes in earlier versions adress the changelog included in the MiniMonster.s2s Versions() procedure._
+_For changes in earlier versions address the changelog included in the MiniMonster.s2s Versions() procedure._
