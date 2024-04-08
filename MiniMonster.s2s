@@ -45,10 +45,11 @@ Proc Versions()
 '        - Correctly disable maunual mode settings on initial settings dialog load.
 '        - Fixed includes working correctly if Spikes is started from a folder different to the one containing the main script.
 '1.72b   - Only load channel number from config file if the channel exists as Waveform channel in current data file.
+'1.73b   - Query user to open a Spike2 Datafile if none is open at script start.
 end;
 '---------------------------Global Variable Declarations-----------------------------
 '------General Script Information------
-var Version$:="1.72b"; 'Script Version
+var Version$:="1.73b"; 'Script Version
 var quit%;  'flag if essential dialog has been cancelled by the user, causes script to halt at exit points
 var rerun%:=0; 'flag 1 if old peak data is loaded
 var configload%;    'flag if config was loaded
@@ -125,7 +126,12 @@ var decaylimit:=37;     'stores the end value for decay time measurement in % of
 var Mt:=60;      'stores the time range for calculating mean frequency
 '--------------------------------------
 '--------View and channel handles------
-var file%:=View();  'stores viewhandle of file
+if ViewKind() = 0 then
+    var file%:=View();  'stores viewhandle of file
+else
+    file%:=FileOpen("",0,1,"Open a Spike2 datafile");
+    if file% < 0 then halt endif;
+endif;
 var ch%:=3;     'stores channel of interest
 var smooth%;    'stores smoothed channel handle
 var slope%;     'stores channel handle of 1st derivative
