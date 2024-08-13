@@ -1,5 +1,5 @@
-'MiniMonster - Script for detection and analysis of miniature postsynaptic currents
-'Script written by Heiko Endle at Universitätsmedizin Mainz
+'MiniMonster - a Spike2 script for detection and analysis of miniature postsynaptic currents
+'Author: Heiko Endle - Department of Molecular and Translational Neurosciences, Institute of Anatomy II, University of Cologne
 Proc Versions()
 'MiniMonster Script Versions
 '1.0:   Initial release.
@@ -229,7 +229,7 @@ case rerun% = 0 then
         AddMarker(marker%,peaks);   
     endcase;
 endcase;
-InitDataArrays(peaks,approved%,autoreject%,peaksLeft,peaksRight,amplitudes,peakhalfwidth,slopes,decay);
+InitDataArrays(peaks,approved%,autoreject%,amplitudes,peakhalfwidth,slopes,decay); 'initialize arrays for peak properties to proper size
 GetPeakData(peaks,peaksLeft,peaksRight);    'Calculate peak properties
 Autoreject();
 MovetoEvent(0);
@@ -1276,7 +1276,7 @@ for n%:=0 to len(peaks)-1 do
 next;
 return;
 end;
-Proc InitDataArrays (source[],appr%[],auto%[],left[],right[],ampl[],hw[],slope[],decay[])   'Initialises data arrays and sets all events to approved
+Proc InitDataArrays (source[],appr%[],auto%[],ampl[],hw[],slope[],decay[])   'Initialises data arrays and sets all events to approved
 var n%;
 resize appr%[len(source)];
 resize auto%[len(source)];
@@ -1288,8 +1288,6 @@ for n%:=0 to len(appr%)-1 do
     endif;    
     auto%[n%]:=0;
 next;
-'resize left[len(source)];
-'resize right[len(source)];
 resize ampl[len(source)];
 resize hw[len(source)];
 resize slope[len(source)];

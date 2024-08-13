@@ -1,5 +1,5 @@
 'libPeakDetect is a library of functions for peak detection
-'This script was written by Heiko Endle at Universit‰tsmedizin Mainz
+'This script was written by Heiko Endle at Universit√§tsmedizin Mainz
 '----------------------------------------
 'Changelog
 '----------------------------------------
@@ -9,10 +9,11 @@
 '0.6b:  - Implemented new peakfinding algorithm based on slope
 '       - fixed error failing to finding on/offset of peaks that was outside of recorded time
 '0.7b:  - Added high and lowpassfilters to ProcessRawData
+'0.71b: - fixed crash if no peaks are found in slope based and progressive maximum based approaches
 '----------------------------------------
 'Global Variables Delcarations
 '----------------------------------------
-var libPeakDetectVersion$:="0.7b"; 'Script Version
+var libPeakDetectVersion$:="0.71b"; 'Script Version
 'var ch%;       'debug
 'var smooth%;   'debug
 'var slope%;    'debug
@@ -239,6 +240,12 @@ wend
 ClearDetectionArray(peaksfound);
 ClearDetectionArray(peaksleft);
 ClearDetectionArray(peaksright);
+
+if len(peaksfound) = 0 then 'if no peaks are found message user and halt
+    Message("No peaks found.");
+    halt;
+endif;
+
 resize peaksarr[len(peaksfound)];
 resize peaksonset[len(peaksleft)];
 resize peaksoffset[len(peaksright)];
@@ -281,6 +288,12 @@ wend;
 ArrSubX(peaksfound,0)
 ArrSubX(peaksleft,0)
 ArrSubX(peaksright,0)
+
+if len(peaksfound) = 0 then 'if no peaks are found message user and halt
+    Message("No peaks found.");
+    halt;
+endif;
+
 resize peaksarr[len(peaksfound)];
 resize peaksonset[len(peaksleft)];
 resize peaksoffset[len(peaksright)];
