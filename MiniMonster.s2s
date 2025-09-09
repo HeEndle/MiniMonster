@@ -46,10 +46,15 @@ Proc Versions()
 '        - Fixed includes working correctly if Spikes is started from a folder different to the one containing the main script.
 '1.72b   - Only load channel number from config file if the channel exists as Waveform channel in current data file.
 '1.73b   - Query user to open a Spike2 Datafile if none is open at script start.
+'1.74b   - Added channel standard deviation to settings dialog and protocol.
+'        - Cancelling the settings dialog and terminating the script will no longer leave an empty marker channel behind.
+'        - Report event onset and end times.
+'        - Save marker channel to disk at the end.
+'        - Generate WaveMark channel of approved peaks.
 end;
 '---------------------------Global Variable Declarations-----------------------------
 '------General Script Information------
-var Version$:="1.73b"; 'Script Version
+var Version$:="1.74b"; 'Script Version
 var quit%;  'flag if essential dialog has been cancelled by the user, causes script to halt at exit points
 var rerun%:=0; 'flag 1 if old peak data is loaded
 var configload%;    'flag if config was loaded
@@ -63,6 +68,7 @@ var threshold;  'stores threshold value
 var thresholdSD;    'stores the threshold in multiples of noiseSD
 var maxthreshold; 'stores maximum value, used to filter peaks that are too large
 var mean;       'stores mean value of channel
+var SD;         'stores SD of channel
 var noise;      'stores noise level
 var noiseSD;    'stores noise standard deviation
 var NoiseMarkerStart;   'stores start time for noise detection window specified by user
@@ -192,6 +198,7 @@ case rerun% = 1 then
     endif;
     WritePeakOnOffset();
     mean:=ChanMeasure(ch%,2,0,MaxTime());
+    SD:=ChanMeasure(ch%,12,0,MaxTime());
     noise:=GetNoise(ch%);
     CursorNew(0,1);
     CursorNew(0,2);
@@ -204,8 +211,7 @@ case rerun% = 0 then
     configload%:=ReadConfig%(ConfigArr);
     if configload% > 0 then ReadConfigArr(ConfigArr) endif;
     Settings%();
-    PostSettings ();
-    if quit% = 1 then halt endif;
+    PostSettings ();    
     WriteConfigArr(ConfigArr);
     WriteConfig%(ConfigArr);
     WriteHeader(protocol%);
@@ -235,6 +241,7 @@ Autoreject();
 MovetoEvent(0);
 GoToPeakDlg();  'Start Peak Review Dialog
 Cleanup();
+MakeWaveMark();
 WritePeaksList(protocol%);
 WriteMeansList(protocol%);
 WriteMeans(protocol%);    
@@ -353,7 +360,7 @@ DlgCreate("Select Channel");
 DlgChan(1,"Channel to analyze",1);
 DlgShow(ch%);
 mean:=ChanMeasure(ch%,2,0,MaxTime());
-marker%:=NewMarkerChannel%("Events");
+SD:=ChanMeasure(ch%,12,0,MaxTime());
 CursorNew(0,1);
 CursorNew(0,2);
 CursorLabel(4,1,"left");
@@ -361,19 +368,68 @@ CursorLabel(4,2,"right");
 'DlgCreate("Select Mode");
 'DlgList(1,"Detection mode:","Automatic|Manual");
 'DlgShow(Mode%);
-noise:=GetNoise(ch%);
+GetNoise(ch%);
 SamplingRate:=1/BinSize(ch%);    'get sample rate from channel
 end;
 Proc PostSettings() 'run after settings
 threshold:= noiseSD*thresholdSD;
+marker%:=NewMarkerChannel%("Events");
 end;
 Proc Cleanup()  'run at the end.
+var m%;
 
 RemoveRejectedMarkers();
 if keepprocessed% = 0 then
     DeleteProcessedChannels%();
 endif;
 
+m%:=ChanSave(marker%,0); 'save marker channel
+ChanDelete(marker%);
+ChanShow(m%)
+end;
+Func MakeWaveMark() 'generate Wavemark channel with peak data for all approved peaks
+var peakslength[len(peaksRight)];
+var peakson[len(peaksLeft)];
+var peaksoff[len(peaksRight)];
+var longest;
+var n%;
+var i%:=0;
+var wavesize%;
+var wavemark%;
+
+'generate array of peak lengths an apporved peak time ranges
+for n%:=0 to len(peaksLeft)-1 do
+    if approved%[n%] = 1 then
+        peakslength[i%]:= peaksRight[n%] - peaksLeft[n%];
+        peakson[i%]:=peaksLeft[n%];
+        peaksoff[i%]:=peaksRight[n%];
+        i%+=1;
+    endif;   
+next;
+
+ArrSubX(peakslength, 0);
+ArrSubX(peakson, 0);
+ArrSubX(peaksoff, 0);
+
+longest:=peakslength[Max(peakslength)]; 'get longest peak duration
+
+'create Wavemark channel
+wavesize%:=Ceil(longest/BinSize(smooth%));
+if wavesize% > 1024 then wavesize%:=1024 endif;
+wavemark%:=MemChan(6, wavesize%, BinSize(smooth%),0);
+ChanUnits$(wavemark%, ChanUnits$(smooth%));
+ChanScale(wavemark%, ChanScale(smooth%));
+
+'populate with peaks
+var peakData[wavesize%];
+for n%:=0 to len(peakson)-1 do
+    ChanData(smooth%, peakData, peakson[n%], peakson[n%]+wavesize%*BinSize(smooth%));
+    MemSetItem(wavemark%, 0, peakson[n%], 1, peakData);
+next;
+
+Optimise(wavemark%);
+ChanShow(wavemark%);
+return wavemark%;
 end;
 Func NewMarkerChannel% (title$)
 var chan%;
@@ -657,6 +713,7 @@ wend;
 if settingsreturn% = 0 then 'if cancel was pressed
     quit%:=1;
     View(protocol%).Print("***Script terminated***"+"\n");
+    halt
 endif;
 
 return 1;
@@ -691,9 +748,11 @@ dlgElement%+=1;
 DlgButton(4,"Filter and smoothing settings",FilterSettings%,2,dlgElement%);
 dlgElement%+=1;
 
-DlgGroup("Automatic detection mode",1,dlgElement%,60,10);
+DlgGroup("Automatic detection mode",1,dlgElement%,60,11);
 dlgElement%+=1;
-DlgText("Mean Value: "+Str$(mean,3,3)+" "+ChanUnits$(ch%),2,dlgElement%);
+DlgText("Mean Channel Value: "+Str$(mean,3,3)+" "+ChanUnits$(ch%),2,dlgElement%);
+dlgElement%+=1;
+DlgText("Channel SD: "+Str$(SD,3,3)+" "+ChanUnits$(ch%),2,dlgElement%);
 dlgElement%+=1;
 DlgText("Noise SD: "+Str$(noiseSD,3,3)+" "+ChanUnits$(ch%),2,dlgElement%);
 dlgElement%+=1;
@@ -730,14 +789,13 @@ dlgElement%+=1;
 
 DlgGroup("Additional Settings",1,dlgElement%,60,4);
 dlgElement%+=1;
-DlgButton(5,"Spike rejection settings",SpikeRejectionSetting%,2,dlgElement%);
+DlgButton(5,"Spike rejection settings    ",SpikeRejectionSetting%,2,dlgElement%);
 dlgElement%+=1;
 DlgButton(6,"Spike parameters settings",SpikeParameterSetting%,2,dlgElement%);
 dlgElement%+=1;
-DlgButton(7,"Noise detection settings",NoiseRejectionSetting%,2,dlgElement%);
+DlgButton(7,"Noise detection settings   ",NoiseRejectionSetting%,2,dlgElement%);
 dlgElement%+=1;
 
-'DlgButton(0,"Cancel",SettingsCancel%);
 DlgAllow(319,0,SettingChanged%);
 dlgreturn%:=DlgShow(ch%,peakdirection%,Mode%,PeakDetectionModule%,searchrange,keepprocessed%,thresholdSD,avginterval,MinPeakDistance,sloperange,SlopeDetect,ManualCursorSnap,thresholdCursorSD);
 return dlgreturn%;
@@ -830,7 +888,7 @@ case item% = 4 then 'Change in automatic peak detection module
 endcase;
 return 1;
 end;
-Func SettingsCancel%()  'deprecated
+Func SettingsCancel%()  'Button function for a cancel button that will terminate script
 quit%:=1;
 View(protocol%).Print("***Script terminated***"+"\n");
 return -1;
@@ -1006,6 +1064,7 @@ var autorej%:=0;    'counter if a autorejection setting has been set
 View(protocol%).Print("Analysis performed on: "+File$+"\n");
 View(protocol%).Print("Analysed Channel: "+Str$(ch%)+"\n");
 View(protocol%).Print("Mean Channel value: "+Str$(mean,3,2)+" "+YUnit$+"\n");
+View(protocol%).Print("Channel SD: "+Str$(SD,3,2)+" "+YUnit$+"\n");
 View(protocol%).Print("Min-Max Noise: "+Str$(noise)+" "+YUnit$+"\n");
 View(protocol%).Print("SD of Noise: "+Str$(noiseSD)+" "+YUnit$+"\n");
 
@@ -1107,7 +1166,9 @@ var XUnit$:=XUnits$();
 var YUnit$:=ChanUnits$(ch%);
 View(protocol%).Print("\n"+"List of approved Events:"+"\n");
 View(protocol%).Print("Event"+"\t");
-View(protocol%).Print("Time "+"["+XUnit$+"]"+"\t");
+View(protocol%).Print("Peak Time "+"["+XUnit$+"]"+"\t");
+View(protocol%).Print("Peak Onset Time "+"["+XUnit$+"]"+"\t");
+View(protocol%).Print("Peak End Time "+"["+XUnit$+"]"+"\t");
 View(protocol%).Print("Amplitude "+"["+YUnit$+"]"+"\t");
 View(protocol%).Print("Half-Maximum width "+"["+XUnit$+"]"+"\t");
 View(protocol%).Print("Initial Slope or Rise "+"["+YUnit$+"/"+XUnit$+"]"+"\t");
@@ -1117,6 +1178,8 @@ for n%:=0 to len(peaks)-1 do
         approvedcount%+=1; 
         View(protocol%).Print("Event "+Str$(n%+1)+"\t"); 'Event number
         View(protocol%).Print(Str$(peaks[n%])+"\t");    'Event time code
+        View(protocol%).Print(Str$(peaksLeft[n%])+"\t");    'Event onset time code
+        View(protocol%).Print(Str$(peaksRight[n%])+"\t");    'Event end time code
         View(protocol%).Print(Str$(amplitudes[n%])+"\t");   'peak amplitude
         View(protocol%).Print(Str$(peakhalfwidth[n%])+"\t"); 'peak halfmaximum width
         View(protocol%).Print(Str$(slopes[n%])+"\t");       'slope or rise
@@ -1126,6 +1189,8 @@ next;
 View(protocol%).Print("\n"+"List of Events rejected by User:"+"\n");
 View(protocol%).Print("Event"+"\t");
 View(protocol%).Print("Time "+"["+XUnit$+"]"+"\t");
+View(protocol%).Print("Peak Onset Time "+"["+XUnit$+"]"+"\t");
+View(protocol%).Print("Peak End Time "+"["+XUnit$+"]"+"\t");
 View(protocol%).Print("Amplitude "+"["+YUnit$+"]"+"\t");
 View(protocol%).Print("Half-Maximum width "+"["+XUnit$+"]"+"\t");
 View(protocol%).Print("Initial Slope or Rise "+"["+YUnit$+"/"+XUnit$+"]"+"\t");
@@ -1135,6 +1200,8 @@ for n%:=0 to len(peaks)-1 do
         rejectedcount%+=1;
         View(protocol%).Print("Event "+Str$(n%+1)+"\t"); 'Event number
         View(protocol%).Print(Str$(peaks[n%])+"\t");    'Event time code
+        View(protocol%).Print(Str$(peaksLeft[n%])+"\t");    'Event onset time code
+        View(protocol%).Print(Str$(peaksRight[n%])+"\t");    'Event end time code
         View(protocol%).Print(Str$(amplitudes[n%])+"\t");   'peak amplitude
         View(protocol%).Print(Str$(peakhalfwidth[n%])+"\t"); 'peak halfmaximum width
         View(protocol%).Print(Str$(slopes[n%])+"\t");       'slope or rise
@@ -1145,6 +1212,8 @@ if rejectedcount% = 0 then View(protocol%).Print("none"+"\n") endif;
 View(protocol%).Print("\n"+"List of Events rejected by System:"+"\n");
 View(protocol%).Print("Event"+"\t");
 View(protocol%).Print("Time "+"["+XUnit$+"]"+"\t");
+View(protocol%).Print("Peak Onset Time "+"["+XUnit$+"]"+"\t");
+View(protocol%).Print("Peak End Time "+"["+XUnit$+"]"+"\t");
 View(protocol%).Print("Amplitude "+"["+YUnit$+"]"+"\t");
 View(protocol%).Print("Half-Maximum width "+"["+XUnit$+"]"+"\t");
 View(protocol%).Print("Initial Slope or Rise "+"["+YUnit$+"/"+XUnit$+"]"+"\t");
@@ -1154,6 +1223,8 @@ for n%:=0 to len(peaks)-1 do
         autorejectedcount%+=1;
         View(protocol%).Print("Event "+Str$(n%+1)+"\t"); 'Event number
         View(protocol%).Print(Str$(peaks[n%])+"\t");    'Event time code
+        View(protocol%).Print(Str$(peaksLeft[n%])+"\t");    'Event onset time code
+        View(protocol%).Print(Str$(peaksRight[n%])+"\t");    'Event end time code
         View(protocol%).Print(Str$(amplitudes[n%])+"\t");   'peak amplitude
         View(protocol%).Print(Str$(peakhalfwidth[n%])+"\t"); 'peak halfmaximum width
         View(protocol%).Print(Str$(slopes[n%])+"\t");       'slope or rise
@@ -1252,7 +1323,7 @@ endcase;
 mean:=mean/approvedpeaks%;
 return mean;
 end;
-Func GetNoise (channel%)    'Lets the user set two cursors (3 and 4) and returns the Maximum value difference in the trace between them
+Func GetNoise (channel%)    'Lets the user set two cursors (3 and 4) to mark basline noise. Stores noise levels for further use
 CursorNew(XLow()+(XHigh()-Xlow())/5,3);
 CursorNew(XHigh()-(XHigh()-Xlow())/5,4);
 CursorLabel(4,3,"left");
