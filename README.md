@@ -15,6 +15,14 @@ Copy the scipt folder in any directory and open the **MiniMonster.s2s** file usi
 
 
 ## Changelog v1.7b
+* 1.75b
+  - Peak review dialog can now cycle only between approved events.
+* 1.74b
+  - Added channel standard deviation to settings dialog and protocol.
+  - Cancelling the settings dialog and terminating the script will no longer leave an empty marker channel behind.
+  - Report event onset and end times.
+  - Save marker channel to disk at the end.
+  - Generate WaveMark channel of approved peaks.
 * 1.73b
   - Query user to open a Spike2 Datafile if none is open at script start.
 * 1.72b

@@ -51,10 +51,11 @@ Proc Versions()
 '        - Report event onset and end times.
 '        - Save marker channel to disk at the end.
 '        - Generate WaveMark channel of approved peaks.
+'1.75b   - Peak review dialog can now cycle only between approved events.
 end;
 '---------------------------Global Variable Declarations-----------------------------
 '------General Script Information------
-var Version$:="1.74b"; 'Script Version
+var Version$:="1.75b"; 'Script Version
 var quit%;  'flag if essential dialog has been cancelled by the user, causes script to halt at exit points
 var rerun%:=0; 'flag 1 if old peak data is loaded
 var configload%;    'flag if config was loaded
@@ -157,6 +158,9 @@ var slopes[0];      'stores slopes/rise
 var decay[0];       'stores decay times
 var approved%[0];   'stores approval status of events. 1-approved, 0-rejected by user, -1-rejected by system, -2-50Hz noise detected
 var autoreject%[0]; 'stores value for autorejection 
+'-------------------------------------
+'----peak review settings-------------
+var approved_only%:=1; 'flag if checkbox is set in peak review dialog to only switch to approved peaks
 '-------------------------------------
 '-------Debugging---------------------
 var dummy%;         'dummy variable
@@ -383,7 +387,9 @@ if keepprocessed% = 0 then
     DeleteProcessedChannels%();
 endif;
 
-m%:=ChanSave(marker%,0); 'save marker channel
+if rerun% = 0 then
+    m%:=ChanSave(marker%,0); 'save marker channel
+endif;
 ChanDelete(marker%);
 ChanShow(m%)
 end;
@@ -533,28 +539,37 @@ endif;
 end;
 Proc GoToPeakDlg () 'create peak review dialog
 DlgCreate("Peak Review");
-TextItem1%:=DlgText(PeakPropertiesStr$(CurrentPeak%),0,1,20);
-DlgLabel(1,ApprovesStatus$(CurrentPeak%),0,5);
-DlgButton(2,"   NOPE!   |0x20",ChangeApproval%,10.5,6);
-DlgButton(3,"Previous|0x25",Changeview%,5,7);
-DlgButton(4,"Next|0x27",Changeview%,-5,7);
-DlgButton(5,"Pick Manual",ManualModeDlg%,10,8);
+DlgCheck(1, "approved only", 0, 1);
+TextItem1%:=DlgText(PeakPropertiesStr$(CurrentPeak%),0,2,20);
+DlgLabel(2,ApprovesStatus$(CurrentPeak%),0,6);
+DlgButton(2,"   NOPE!   |0x20",ChangeApproval%,10.5,7);
+DlgButton(3,"Previous|0x25",Changeview%,5,8);
+DlgButton(4,"Next|0x27",Changeview%,-5,8);
+DlgButton(5,"Pick Manual",ManualModeDlg%,10,9);
 DlgButton(0,"");
 DlgButton(1,"Close");
 DlgAllow(319,0,DlgChanged%); 
-DlgShow(dummy%);
+DlgShow(approved_only%, dummy%);
 end;
 Func Changeview%()  'called when user presses previous/next buttons and changes view to next detected event
 if DlgButton() =3 then
     if CurrentPeak% > 0 then
-        MovetoEvent(CurrentPeak%-1);
+        if approved_only% = 0 then
+            MovetoEvent(CurrentPeak%-1);
+        else
+            MovetoEvent(GetNextApproved%(CurrentPeak%, -1));
+        endif;
     endif
 else
     if CurrentPeak% < len(peaks)-1 then
-        MovetoEvent(CurrentPeak%+1);
+        if approved_only% = 0 then
+            MovetoEvent(CurrentPeak%+1);
+        else
+            MovetoEvent(GetNextApproved%(CurrentPeak%, 1));
+        endif;
     endif    
 endif;
-DlgValue$(1,ApprovesStatus$(CurrentPeak%));
+DlgValue$(2,ApprovesStatus$(CurrentPeak%));
 DlgValue$(TextItem1%,PeakPropertiesStr$(CurrentPeak%));
 if  approved%[CurrentPeak%] = 1 then    'change the label of the approval change button
     DlgValue$(-2,"Reject");
@@ -562,6 +577,18 @@ else
     DlgValue$(-2,"Approve");
 endif;
 return 1;
+end;
+Func GetNextApproved%(event%, direction%)   'get next approved event in direction from event
+var approved_event%:= event%;
+
+repeat    
+    if (approved_event% + direction%) > len(approved%)-1 or (approved_event% + direction%) < 0 then
+        return event%;
+    endif;
+    approved_event%+= direction%;
+until approved%[approved_event%] = 1;
+
+return approved_event%
 end;
 Func ChangeApproval%()  'called when the user presses the button to change the approval status of a peak in peak review
 If approved%[CurrentPeak%] = 1 then
@@ -681,14 +708,21 @@ for n%:=0 to len(approved%)-1 do
     endif;    
 next;
 end;
-Func DlgChanged%(item%)
+Func DlgChanged%(item%) 'Change function for peak review dialog
 docase
 case item% = 0 then 'Dialog initialised
+    if approved_only% = 1 then
+        MovetoEvent(GetNextApproved%(CurrentPeak%, 1));
+        DlgValue$(2,ApprovesStatus$(CurrentPeak%));
+        DlgValue$(TextItem1%,PeakPropertiesStr$(CurrentPeak%));
+    endif;
     if  approved%[CurrentPeak%] = 1 then
         DlgValue$(-2,"Reject");
     else
         DlgValue$(-2,"Approve");
-    endif;    
+    endif;
+case item% = 1 then
+    approved_only%:= DlgValue(1);
 endcase;
 return 1;
 end;
