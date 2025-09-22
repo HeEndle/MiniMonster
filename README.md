@@ -15,6 +15,8 @@ Copy the scipt folder in any directory and open the **MiniMonster.s2s** file usi
 
 
 ## Changelog v1.7b
+* 1.76b
+  - Report SEM and SD for Amplitude, Slope, Half-width and decay for summary statistics.
 * 1.75b
   - Peak review dialog can now cycle only between approved events.
 * 1.74b

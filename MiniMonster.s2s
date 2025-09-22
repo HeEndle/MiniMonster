@@ -52,10 +52,11 @@ Proc Versions()
 '        - Save marker channel to disk at the end.
 '        - Generate WaveMark channel of approved peaks.
 '1.75b   - Peak review dialog can now cycle only between approved events.
+'1.76b   - Report SEM and SD for Amplitude, Slope, Half-width and decay
 end;
 '---------------------------Global Variable Declarations-----------------------------
 '------General Script Information------
-var Version$:="1.75b"; 'Script Version
+var Version$:="1.76b"; 'Script Version
 var quit%;  'flag if essential dialog has been cancelled by the user, causes script to halt at exit points
 var rerun%:=0; 'flag 1 if old peak data is loaded
 var configload%;    'flag if config was loaded
@@ -1311,51 +1312,58 @@ Func WriteMeans (protocol%) 'writes the means over full time in protocol
 var time:=MaxTime(ch%);
 var XUnit$:=XUnits$();
 var YUnit$:=ChanUnits$(ch%);
-var meanAmpl:=GetMeanApproved(amplitudes,0);
-var meanHw:=GetMeanApproved(peakhalfwidth,0);
-var meanSlopeRise:=GetMeanApproved(slopes,2);
-var meanDecay:=GetMeanApproved(decay,0);
+var AmplS[3];
+GetApprovedStats(amplitudes,0, AmplS);
+var HwS[3];
+GetApprovedStats(peakhalfwidth,0,HwS);
+var SlopeRiseS[3];
+GetApprovedStats(slopes,2, SlopeRiseS);
+var DecayS[3];
+GetApprovedStats(decay,0, DecayS);
 '---function code---
 View(protocol%).Print("\n"+"Mean Values:"+"\n");
 View(protocol%).Print("Time analyzed: "+Str$(time)+" s"+"\n");
 View(protocol%).Print("Event Frequency: "+Str$(ArrNumberofValuesInt%(approved%,1)/time)+" Hz"+"\n");
-View(protocol%).Print("Amplitude: "+Str$(meanAmpl)+" "+YUnit$+"\n");
-View(protocol%).Print("Half-maximum width: "+Str$(meanHw)+" "+XUnit$+"\n");
-View(protocol%).Print("Initial Slope/Rise: "+Str$(meanSlopeRise)+" "+YUnit$+"/"+XUnit$+"\n");
-View(protocol%).Print("Decay time: "+Str$(meanDecay)+" "+XUnit$+"\n");
+View(protocol%).Print("Amplitude: "+Str$(AmplS[0])+" "+YUnit$+" ± "+Str$(AmplS[2])+" (SEM), "+Str$(AmplS[1])+" (SD)"+"\n");
+View(protocol%).Print("Half-maximum width: "+Str$(HwS[0])+" "+XUnit$+" ± "+Str$(HwS[2])+" (SEM), "+Str$(HwS[1])+" (SD)"+"\n");
+View(protocol%).Print("Initial Slope/Rise: "+Str$(SlopeRiseS[0])+" "+YUnit$+"/"+XUnit$+" ± "+Str$(SlopeRiseS[2])+" (SEM), "+Str$(SlopeRiseS[1])+" (SD)""\n");
+View(protocol%).Print("Decay time: "+Str$(DecayS[0])+" "+XUnit$+" ± "+Str$(DecayS[2])+" (SEM), "+Str$(DecayS[1])+" (SD)""\n");
 end;
-Func GetMeanApproved (arr[],IncludeValues%) 'get mean value of peakdata array, mode 0: include all values, mode 1: exclude values below 0, mode 2: exclude 0 values
+Func GetApprovedStats(arr[], IncludeValues%, stats[])  'return array statistics of peakdata array, mode 0: include all values, mode 1: exclude values below 0, mode 2: exclude 0 values
 '---varialbe delcaration---
-var mean;
+var approvedData[len(arr)];
 var n%;
 var approvedpeaks%;
-'---function code---
+' stats[3];   0: mean, 1: SD, 2: SEM
+'---fucntion code----
 if ArrSum(approved%) = 0 then return 0 endif;   'prevent divide by zero
 docase
 case IncludeValues% = 2 then
     for n%:=0 to len(arr[])-1 do
         if approved%[n%] = 1 AND arr[n%] <> 0 then
-            mean+=arr[n%];
+            approvedData[approvedpeaks%]:=arr[n%];
             approvedpeaks%+=1;
         endif    
     next
 case IncludeValues% = 1 then
     for n%:=0 to len(arr[])-1 do
         if approved%[n%] = 1 AND arr[n%] > 0 then
-            mean+=arr[n%];
+            approvedData[approvedpeaks%]:=arr[n%];
             approvedpeaks%+=1;
         endif    
     next
 case IncludeValues% = 0 then
     for n%:=0 to len(arr[])-1 do
         if approved%[n%] = 1 then
-            mean+=arr[n%];
+            approvedData[approvedpeaks%]:=arr[n%];
             approvedpeaks%+=1;
         endif    
     next    
 endcase;
-mean:=mean/approvedpeaks%;
-return mean;
+
+resize approvedData[approvedpeaks%];
+ArrSum(approvedData, stats[0], stats[1]);    'get mean and SD
+stats[2]:=stats[1]/Sqrt(approvedpeaks%);    'calculate SEM
 end;
 Func GetNoise (channel%)    'Lets the user set two cursors (3 and 4) to mark basline noise. Stores noise levels for further use
 CursorNew(XLow()+(XHigh()-Xlow())/5,3);
