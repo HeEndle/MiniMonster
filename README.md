@@ -15,6 +15,8 @@ Copy the scipt folder in any directory and open the **MiniMonster.s2s** file usi
 
 
 ## Changelog v1.7b
+* 1.77b
+  - Fixed channel selection when reloading previous analysis.
 * 1.76b
   - Report SEM and SD for Amplitude, Slope, Half-width and decay for summary statistics.
 * 1.75b

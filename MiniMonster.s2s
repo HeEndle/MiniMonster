@@ -52,11 +52,12 @@ Proc Versions()
 '        - Save marker channel to disk at the end.
 '        - Generate WaveMark channel of approved peaks.
 '1.75b   - Peak review dialog can now cycle only between approved events.
-'1.76b   - Report SEM and SD for Amplitude, Slope, Half-width and decay
+'1.76b   - Report SEM and SD for Amplitude, Slope, Half-width and decay for summary stats.
+'1.77b   - Fixed channel selection when reloading previous analysis.
 end;
 '---------------------------Global Variable Declarations-----------------------------
 '------General Script Information------
-var Version$:="1.76b"; 'Script Version
+var Version$:="1.77b"; 'Script Version
 var quit%;  'flag if essential dialog has been cancelled by the user, causes script to halt at exit points
 var rerun%:=0; 'flag 1 if old peak data is loaded
 var configload%;    'flag if config was loaded
@@ -202,13 +203,7 @@ case rerun% = 1 then
         ProcessAdapter();
     endif;
     WritePeakOnOffset();
-    mean:=ChanMeasure(ch%,2,0,MaxTime());
-    SD:=ChanMeasure(ch%,12,0,MaxTime());
-    noise:=GetNoise(ch%);
-    CursorNew(0,1);
-    CursorNew(0,2);
-    CursorLabel(4,1,"left");
-    CursorLabel(4,2,"right");
+    Init()
     SpikeRejectionSetting%();
     WriteHeader(protocol%);
 case rerun% = 0 then    
@@ -594,11 +589,11 @@ end;
 Func ChangeApproval%()  'called when the user presses the button to change the approval status of a peak in peak review
 If approved%[CurrentPeak%] = 1 then
     approved%[CurrentPeak%]:=0;
-    DlgValue$(1,ApprovesStatus$(CurrentPeak%));
+    DlgValue$(2,ApprovesStatus$(CurrentPeak%));
     DlgValue$(-2,"Approve");
 else
     approved%[CurrentPeak%]:=1;
-    DlgValue$(1,ApprovesStatus$(CurrentPeak%));
+    DlgValue$(2,ApprovesStatus$(CurrentPeak%));
     DlgValue$(-2,"Reject");
 endif
 return 1;
@@ -1277,12 +1272,13 @@ var peaksamp;   'stores the average amplitude of peaks in the timerange
 var time:=peaks[0];
 var timelimitfrom:=0; 'stores leftend of current time range
 var timelimitto:=Mt; 'stores rightend of current time range
+var chanlength:=Val(Str$(MaxTime(ch%))); 'stores channel length in seconds (casting necessary since MaxTime return is inconsistent as a channel with excatly 180s will return 179.9999999999999997s but display as 180s)
 '---function code---
 View(protocol%).Print("\n"+"List of mean frequency and amplitudes:"+"\n");
 View(protocol%).Print("Time [s]"+"\t"+"Peaks"+"\t"+"Frequency [Hz]"+"\t"+"Amplitude ["+View(file%).ChanUnits$(ch%)+"]"+"\n");
-while timelimitto < MaxTime(ch%) do
+while timelimitto <= chanlength do
     if n% < len(peaks) then
-        while time < timelimitto do
+        while time <= timelimitto do
             if approved%[n%] = 1 then
                 peaksnumber%+=1;
                 peaksamp+=amplitudes[n%];
